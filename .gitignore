@@ -1,0 +1,6 @@
+# secrets
+essential-haiku-*.json
+client_secret_*.json
+clientes
+.env
+*.env

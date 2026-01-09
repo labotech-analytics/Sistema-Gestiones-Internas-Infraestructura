@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Infra Gestión</title>
+
+  <link rel="stylesheet" href="./styles.css"/>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+
+<body>
+  <!-- Topbar -->
+  <header class="topbar">
+    <button id="btnMenu" class="icon-btn" type="button" aria-label="Abrir menú">
+      <!-- hamburger -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <div class="brand">
+      <div class="brand-mark">IG</div>
+      <div class="brand-text">
+        <div class="brand-title">Infra Gestión</div>
+        <div class="brand-subtitle">Gestión de infraestructura · BigQuery</div>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <div id="userBox" class="userbox"></div>
+      <button id="btnLogout" class="btn ghost hidden" type="button">Salir</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- LOGIN -->
+    <section id="loginSection" class="card login-card">
+      <div class="login-head">
+        <h2 class="h2">Ingresar</h2>
+        <p class="hint">Acceso solo por lista blanca (roles en BigQuery).</p>
+      </div>
+
+      <div id="googleBtn" class="google-btn"></div>
+
+      <p id="loginStatus" class="hint hidden"></p>
+      <p id="loginError" class="error hidden"></p>
+    </section>
+
+    <!-- APP -->
+    <section id="appSection" class="hidden">
+      <p id="appError" class="error hidden"></p>
+
+      <div class="app-shell">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="sidebar" aria-label="Navegación">
+          <div class="sidebar-inner">
+            <div class="nav-title">Menú</div>
+
+            <button class="nav-item active" type="button" data-view="gestiones">
+              <span class="nav-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <span>Gestiones</span>
+            </button>
+
+            <button class="nav-item" type="button" data-view="tablero">
+              <span class="nav-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 19V5m0 14h16M8 16v-5m4 5v-8m4 8v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span>Tablero</span>
+            </button>
+
+            <button id="navUsuarios" class="nav-item hidden" type="button" data-view="usuarios">
+              <span class="nav-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" fill="none" stroke="currentColor" stroke-width="2"/>
+                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <span>Usuarios</span>
+              <span class="pill">Admin</span>
+            </button>
+
+            <div class="sidebar-foot">
+              <div class="mini">
+                <div class="mini-label">Tips</div>
+                <div class="mini-text">Esc: cerrar modal · ⟳ refrescar · 🔎 buscar local</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Overlay (mobile) -->
+        <div id="sidebarOverlay" class="sidebar-overlay hidden" aria-hidden="true"></div>
+
+        <!-- Content -->
+        <div class="content">
+          <!-- ========== VIEW: GESTIONES ========== -->
+          <section id="viewGestiones" class="view active">
+            <div class="page-head">
+              <div>
+                <h2 class="page-title">Gestiones</h2>
+                <div id="pagerInfo" class="hint"></div>
+              </div>
+
+              <div class="page-actions">
+                <div class="search">
+                  <span class="search-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+                      <path d="M20 20l-3.2-3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                  </span>
+                  <input id="searchInput" type="text" placeholder="Buscar (detalle, id, depto, localidad, estado)..." />
+                </div>
+
+                <button class="btn" type="button" onclick="loadGestiones()">
+                  <span class="btn-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M21 12a9 9 0 1 1-9-9c2.6 0 5 1.1 6.7 2.8L21 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <path d="M21 3v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                  </span>
+                  Refrescar
+                </button>
+
+                <button id="btnNuevaGestion" class="btn primary" type="button" onclick="openNew()">
+                  <span class="btn-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                  </span>
+                  Nueva
+                </button>
+              </div>
+            </div>
+
+            <div class="card toolbar modern-toolbar">
+              <div class="filters">
+                <div class="field">
+                  <label class="label">Estado</label>
+                  <select id="estadoFilter">
+                    <option value="">(Todos)</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label class="label">Ministerio</label>
+                  <select id="ministerioFilter">
+                    <option value="">(Todos)</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label class="label">Categoría</label>
+                  <select id="categoriaFilter">
+                    <option value="">(Todos)</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label class="label">Departamento</label>
+                  <select id="departamentoFilter">
+                    <option value="">(Todos)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="card table-card">
+              <div class="table-wrap">
+                <table class="grid modern-grid" id="grid"></table>
+              </div>
+            </div>
+          </section>
+
+          <!-- ========== VIEW: TABLERO ========== -->
+          <section id="viewTablero" class="view">
+            <div class="page-head">
+              <div>
+                <h2 class="page-title">Tablero</h2>
+                <p class="hint">Vista embebida (Looker Studio).</p>
+              </div>
+            </div>
+
+            <div class="card">
+              <iframe
+                title="Tablero Infra Gestión"
+                src="https://lookerstudio.google.com/embed/reporting/f9dc4a4e-a174-45a8-938c-385f4121f689/page/fP1fF"
+                allowfullscreen
+                sandbox="allow-storage-access-by-user-activation allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              ></iframe>
+            </div>
+          </section>
+
+          <!-- ========== VIEW: USUARIOS (ADMIN) ========== -->
+          <section id="viewUsuarios" class="view">
+            <div class="page-head">
+              <div>
+                <h2 class="page-title">Usuarios</h2>
+                <p class="hint">Solo visible para Admin. (UI lista; backend de usuarios puede agregarse luego)</p>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="split">
+                <div>
+                  <h3 class="h3">Alta / edición</h3>
+                  <div class="form-grid onecol">
+                    <label>Email
+                      <input id="u_email" type="email" placeholder="usuario@dominio.com" />
+                    </label>
+                    <label>Nombre
+                      <input id="u_nombre" type="text" placeholder="Nombre y apellido" />
+                    </label>
+                    <label>Rol
+                      <select id="u_rol">
+                        <option value="Consulta">Consulta</option>
+                        <option value="Operador">Operador</option>
+                        <option value="Supervisor">Supervisor</option>
+                        <option value="Admin">Admin</option>
+                      </select>
+                    </label>
+                    <label>Activo
+                      <select id="u_activo">
+                        <option value="true">Sí</option>
+                        <option value="false">No</option>
+                      </select>
+                    </label>
+
+                    <div class="row-actions">
+                      <button class="btn primary" type="button" onclick="usuariosPlaceholderGuardar()">Guardar</button>
+                      <button class="btn" type="button" onclick="usuariosPlaceholderRefrescar()">Refrescar</button>
+                    </div>
+
+                    <p class="hint">
+                      Nota: esta pantalla ya está integrada al layout y permisos. Cuando desarrolles backend
+                      (`/usuarios_roles`), solo conectamos estas acciones.
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 class="h3">Listado</h3>
+                  <div class="table-wrap">
+                    <table class="grid modern-grid" id="usersGrid">
+                      <thead>
+                        <tr>
+                          <th>Email</th>
+                          <th>Nombre</th>
+                          <th>Rol</th>
+                          <th>Activo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td colspan="4" class="muted center">
+                            (Sin backend) — Placeholder UI lista para conectar
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </section>
+
+          <!-- MODAL: NUEVA GESTION -->
+          <div id="modalNewGestion" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
+            <div class="modal-overlay" onclick="closeModal('modalNewGestion')"></div>
+            <div class="modal-card" role="document">
+              <div class="modal-head">
+                <h3>Nueva gestión</h3>
+                <button class="btn ghost" type="button" onclick="closeModal('modalNewGestion')">Cerrar</button>
+              </div>
+
+              <div class="form-grid">
+                <label>Ministerio/Agencia
+                  <select id="ng_ministerio"></select>
+                </label>
+
+                <label>Categoría
+                  <select id="ng_categoria"></select>
+                </label>
+
+                <label>Urgencia
+                  <select id="ng_urgencia"></select>
+                </label>
+
+                <label>Departamento
+                  <select id="ng_departamento"></select>
+                </label>
+
+                <label>Localidad
+                  <select id="ng_localidad">
+                    <option value="">(Seleccionar)</option>
+                  </select>
+                </label>
+
+                <label>Dirección
+                  <input id="ng_direccion" type="text" placeholder="Calle y número (opcional)" />
+                </label>
+
+                <label class="span-2">Detalle *
+                  <textarea id="ng_detalle" rows="4" placeholder="Describí la demanda"></textarea>
+                </label>
+
+                <label class="span-2">Observaciones
+                  <textarea id="ng_observaciones" rows="3" placeholder="Opcional"></textarea>
+                </label>
+              </div>
+
+              <div class="modal-actions">
+                <button class="btn primary" type="button" onclick="submitNewGestion()">Crear</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- MODAL: CAMBIAR ESTADO -->
+          <div id="modalChangeState" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
+            <div class="modal-overlay" onclick="closeModal('modalChangeState')"></div>
+            <div class="modal-card" role="document">
+              <div class="modal-head">
+                <h3>Cambiar estado</h3>
+                <button class="btn ghost" type="button" onclick="closeModal('modalChangeState')">Cerrar</button>
+              </div>
+
+              <input id="cs_id_gestion" type="hidden" />
+
+              <div class="form-grid">
+                <label>Nuevo estado
+                  <select id="cs_nuevo_estado"></select>
+                </label>
+
+                <label class="span-2">Comentario (obligatorio en ARCHIVADO / NO REMITE SUAC)
+                  <textarea id="cs_comentario" rows="3" placeholder="Opcional según reglas"></textarea>
+                </label>
+              </div>
+
+              <div class="modal-actions">
+                <button class="btn primary" type="button" onclick="submitChangeState()">Guardar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- MODAL: EVENTOS -->
+          <div id="modalEventos" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
+            <div class="modal-overlay" onclick="closeModal('modalEventos')"></div>
+            <div class="modal-card" role="document">
+              <div class="modal-head">
+                <h3 id="ev_title">Eventos</h3>
+                <button class="btn ghost" type="button" onclick="closeModal('modalEventos')">Cerrar</button>
+              </div>
+              <pre id="ev_body" class="pre"></pre>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
