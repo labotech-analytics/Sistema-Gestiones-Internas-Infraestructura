@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
-from datetime import date
 
 Rol = Literal["Admin", "Operador", "Supervisor", "Consulta"]
 Estado = Literal[
@@ -12,6 +11,7 @@ Estado = Literal[
     "ARCHIVADO",
 ]
 Urgencia = Literal["Alta", "Media", "Baja"]
+
 
 class GestionCreate(BaseModel):
     ministerio_agencia_id: str
@@ -25,6 +25,14 @@ class GestionCreate(BaseModel):
     observaciones: Optional[str] = None
     urgencia: Optional[Urgencia] = "Media"
 
+    # NUEVOS CAMPOS (ya existen en infra_gestion.gestiones)
+    organismo_id: Optional[str] = None
+    subtipo_detalle: Optional[str] = None
+    costo_estimado: Optional[float] = None
+    costo_moneda: Optional[str] = None
+    nro_expediente: Optional[str] = None
+
+
 class GestionUpdate(BaseModel):
     ministerio_agencia_id: Optional[str] = None
     categoria_general_id: Optional[str] = None
@@ -33,10 +41,20 @@ class GestionUpdate(BaseModel):
     urgencia: Optional[Urgencia] = None
     direccion: Optional[str] = None
 
-    # obligatorios en edición también (si vienen, no pueden ser vacíos)
     departamento: Optional[str] = None
     localidad: Optional[str] = None
+
+    organismo_id: Optional[str] = None
+    subtipo_detalle: Optional[str] = None
+    costo_estimado: Optional[float] = None
+    costo_moneda: Optional[str] = None
+    nro_expediente: Optional[str] = None
+
 
 class CambioEstado(BaseModel):
     nuevo_estado: Estado
     comentario: Optional[str] = None
+
+    # del modal “Modificar estado”
+    derivado_a: Optional[str] = None
+    acciones_implementadas: Optional[str] = None

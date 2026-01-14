@@ -1,20 +1,33 @@
-# app/routers/gestiones.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from uuid import uuid4
+from datetime import date, datetime
 import json
 
-from ..deps import qparams
-from ..auth import require_user
-from ..bq import bq_client
-from ..models import GestionCreate, GestionUpdate, CambioEstado
-from .. import sql
+from google.cloud import bigquery
+
+from ..bq import bq_client, fqtn
+from ..deps import qparams, require_roles
+from ..models import GestionCreate, CambioEstado
+from .. import sql as Q
 
 router = APIRouter(prefix="/gestiones", tags=["gestiones"])
 
 
-def must_non_empty(label: str, v: str):
-    if v is None or str(v).strip() == "":
-        raise HTTPException(status_code=400, detail=f"{label} es obligatorio")
+def _run(query: str, cfg: bigquery.QueryJobConfig):
+    return bq_client().query(query, job_config=cfg).result()
+
+
+def _one(query: str, cfg: bigquery.QueryJobConfig):
+    rows = list(_run(query, cfg))
+    return dict(rows[0]) if rows else None
+
+
+def _fmt_tables(sql_text: str) -> str:
+    return sql_text.format(
+        gestiones=fqtn("infra_gestion.gestiones"),
+        eventos=fqtn("infra_gestion.gestiones_eventos"),
+        geo_localidades=fqtn("geo_localidades"),
+    )
 
 
 @router.get("/")
@@ -23,367 +36,242 @@ def list_gestiones(
     ministerio: str | None = None,
     categoria: str | None = None,
     departamento: str | None = None,
+    localidad: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user=Depends(require_user),
+    user=Depends(require_roles("Admin", "Supervisor", "Operador", "Consulta")),
 ):
-    """
-    Devuelve paginado + total:
-      {
-        items: [...],
-        total: N,
-        limit: X,
-        offset: Y
-      }
-    """
-    params_filtros = [
+    cfg_count = qparams([
         ("estado", "STRING", estado),
         ("ministerio", "STRING", ministerio),
         ("categoria", "STRING", categoria),
         ("departamento", "STRING", departamento),
-    ]
+        ("localidad", "STRING", localidad),
+    ])
+    total_row = _one(_fmt_tables(Q.COUNT_GESTIONES), cfg_count)
+    total = int(total_row["total"]) if total_row and "total" in total_row else 0
 
-    # 1) Total (sin limit/offset)
-    job_total = bq_client().query(
-        sql.COUNT_GESTIONES,
-        job_config=qparams(params_filtros),
-    )
-    total_row = list(job_total.result())
-    total = int(total_row[0]["total"]) if total_row else 0
-
-    # 2) Items (paginado)
-    job_items = bq_client().query(
-        sql.LIST_GESTIONES,
-        job_config=qparams(params_filtros + [
-            ("limit", "INT64", limit),
-            ("offset", "INT64", offset),
-        ]),
-    )
-    items = [dict(r) for r in job_items.result()]
-
-    return {
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
+    cfg_list = qparams([
+        ("estado", "STRING", estado),
+        ("ministerio", "STRING", ministerio),
+        ("categoria", "STRING", categoria),
+        ("departamento", "STRING", departamento),
+        ("localidad", "STRING", localidad),
+        ("limit", "INT64", limit),
+        ("offset", "INT64", offset),
+    ])
+    items = [dict(r) for r in _run(_fmt_tables(Q.LIST_GESTIONES), cfg_list)]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{id_gestion}")
-def get_gestion(id_gestion: str, user=Depends(require_user)):
-    job = bq_client().query(
-        sql.GET_GESTION,
-        job_config=qparams([("id", "STRING", id_gestion)]),
-    )
-    rows = list(job.result())
-    if not rows:
-        raise HTTPException(status_code=404, detail="No existe")
-    return dict(rows[0])
-
-
-@router.post("/")
-def create_gestion(payload: GestionCreate, user=Depends(require_user)):
-    # obligatorios
-    must_non_empty("departamento", payload.departamento)
-    must_non_empty("localidad", payload.localidad)
-    must_non_empty("ministerio_agencia_id", payload.ministerio_agencia_id)
-    must_non_empty("categoria_general_id", payload.categoria_general_id)
-    must_non_empty("detalle", payload.detalle)
-
-    depto = payload.departamento.strip()
-    loc = payload.localidad.strip()
-
-    # 0) Lookup geo_localidades -> id_geo + lat/lon
-    q_geo = """
-    SELECT
-      id_geo,
-      lat_centro AS lat,
-      lon_centro AS lon
-    FROM `infra_gestion.geo_localidades`
-    WHERE UPPER(TRIM(departamento)) = UPPER(TRIM(@depto))
-      AND UPPER(TRIM(localidad)) = UPPER(TRIM(@loc))
-      AND activo = TRUE
-    LIMIT 1
-    """
-    job_geo = bq_client().query(
-        q_geo,
-        job_config=qparams([
-            ("depto", "STRING", depto),
-            ("loc", "STRING", loc),
-        ]),
-    )
-    geo_rows = list(job_geo.result())
-    if not geo_rows:
-        raise HTTPException(
-            status_code=400,
-            detail="Departamento/Localidad inválidos (no existen o no están activos en geo_localidades)"
-        )
-
-    geo = dict(geo_rows[0])
-    geo_id = geo["id_geo"]
-    lat = geo.get("lat")
-    lon = geo.get("lon")
-
-    new_id = str(uuid4())
-
-    # 1) Insert gestion con geo_id/lat/lon reales
-    bq_client().query(
-        sql.INSERT_GESTION,
-        job_config=qparams([
-            ("id_gestion", "STRING", new_id),
-            ("urgencia", "STRING", payload.urgencia),
-            ("ministerio", "STRING", payload.ministerio_agencia_id),
-            ("categoria", "STRING", payload.categoria_general_id),
-            ("detalle", "STRING", payload.detalle),
-            ("observaciones", "STRING", payload.observaciones),
-            ("geo_id", "STRING", geo_id),
-            ("departamento", "STRING", depto),
-            ("localidad", "STRING", loc),
-            ("direccion", "STRING", payload.direccion),
-            ("lat", "NUMERIC", lat),
-            ("lon", "NUMERIC", lon),
-            ("actor", "STRING", user["email"]),
-        ]),
-    ).result()
-
-    # 2) evento CREACION
-    bq_client().query(
-        sql.INSERT_EVENTO,
-        job_config=qparams([
-            ("id_evento", "STRING", str(uuid4())),
-
-            ("id_gestion", "STRING", new_id),
-            ("actor_email", "STRING", user["email"]),
-            ("actor_rol", "STRING", user["rol"]),
-            ("tipo_evento", "STRING", "CREACION"),
-
-            ("estado_anterior", "STRING", None),
-            ("estado_nuevo", "STRING", "INGRESADO"),
-            ("comentario", "STRING", None),
-
-            ("payload_json", "STRING", json.dumps(payload.model_dump(), ensure_ascii=False)),
-        ]),
-    ).result()
-
-    return {"id_gestion": new_id}
-
-@router.put("/{id_gestion}")
-def update_gestion(id_gestion: str, payload: GestionUpdate, user=Depends(require_user)):
-    if user["rol"] == "Consulta":
-        raise HTTPException(status_code=403, detail="Sin permiso")
-
-    # si vienen depto/localidad, no pueden ser vacíos
-    if payload.departamento is not None:
-        must_non_empty("departamento", payload.departamento)
-    if payload.localidad is not None:
-        must_non_empty("localidad", payload.localidad)
-
-    # Por defecto no tocamos geo/lat/lon, salvo que cambien depto/localidad (o venga alguno)
-    geo_id = None
-    lat = None
-    lon = None
-
-    depto = payload.departamento.strip() if payload.departamento else None
-    loc = payload.localidad.strip() if payload.localidad else None
-
-    # si cambia alguno de los dos, necesitamos ambos para recalcular
-    if payload.departamento is not None or payload.localidad is not None:
-        if not depto or not loc:
-            raise HTTPException(status_code=400, detail="Para cambiar ubicación, departamento y localidad deben venir juntos")
-
-        q_geo = """
-        SELECT
-          id_geo,
-          lat_centro AS lat,
-          lon_centro AS lon
-        FROM `infra_gestion.geo_localidades`
-        WHERE UPPER(TRIM(departamento)) = UPPER(TRIM(@depto))
-          AND UPPER(TRIM(localidad)) = UPPER(TRIM(@loc))
-          AND activo = TRUE
-        LIMIT 1
-        """
-        job_geo = bq_client().query(
-            q_geo,
-            job_config=qparams([
-                ("depto", "STRING", depto),
-                ("loc", "STRING", loc),
-            ]),
-        )
-        geo_rows = list(job_geo.result())
-        if not geo_rows:
-            raise HTTPException(
-                status_code=400,
-                detail="Departamento/Localidad inválidos (no existen o no están activos en geo_localidades)"
-            )
-
-        geo = dict(geo_rows[0])
-        geo_id = geo["id_geo"]
-        lat = geo.get("lat")
-        lon = geo.get("lon")
-
-    # UPDATE (incluye geo/lat/lon solo si recalculamos)
-    q_update = """
-    UPDATE `infra_gestion.gestiones`
-    SET
-      ministerio_agencia_id = COALESCE(@ministerio, ministerio_agencia_id),
-      categoria_general_id  = COALESCE(@categoria, categoria_general_id),
-      detalle               = COALESCE(@detalle, detalle),
-      observaciones         = COALESCE(@observaciones, observaciones),
-      urgencia              = COALESCE(@urgencia, urgencia),
-      direccion             = COALESCE(@direccion, direccion),
-
-      departamento          = COALESCE(@departamento, departamento),
-      localidad             = COALESCE(@localidad, localidad),
-
-      geo_id                = COALESCE(@geo_id, geo_id),
-      lat                   = COALESCE(@lat, lat),
-      lon                   = COALESCE(@lon, lon),
-
-      updated_at = CURRENT_TIMESTAMP(),
-      updated_by = @actor
-    WHERE id_gestion = @id AND is_deleted = FALSE
-    """
-    bq_client().query(
-        q_update,
-        job_config=qparams([
-            ("id", "STRING", id_gestion),
-            ("ministerio", "STRING", payload.ministerio_agencia_id),
-            ("categoria", "STRING", payload.categoria_general_id),
-            ("detalle", "STRING", payload.detalle),
-            ("observaciones", "STRING", payload.observaciones),
-            ("urgencia", "STRING", payload.urgencia),
-            ("direccion", "STRING", payload.direccion),
-            ("departamento", "STRING", depto),
-            ("localidad", "STRING", loc),
-
-            ("geo_id", "STRING", geo_id),
-            ("lat", "NUMERIC", lat),
-            ("lon", "NUMERIC", lon),
-
-            ("actor", "STRING", user["email"]),
-        ]),
-    ).result()
-
-    # evento EDICION (igual que antes)
-    bq_client().query(
-        sql.INSERT_EVENTO,
-        job_config=qparams([
-            ("id_evento", "STRING", str(uuid4())),
-            ("id_gestion", "STRING", id_gestion),
-            ("actor_email", "STRING", user["email"]),
-            ("actor_rol", "STRING", user["rol"]),
-            ("tipo_evento", "STRING", "EDICION"),
-            ("estado_anterior", "STRING", None),
-            ("estado_nuevo", "STRING", None),
-            ("comentario", "STRING", None),
-            ("payload_json", "STRING", json.dumps(payload.model_dump(), ensure_ascii=False)),
-        ]),
-    ).result()
-
-    return {"ok": True}
-
-
-@router.post("/{id_gestion}/cambiar-estado")
-def cambiar_estado(id_gestion: str, payload: CambioEstado, user=Depends(require_user)):
-    # restricciones por rol
-    if user["rol"] == "Consulta":
-        raise HTTPException(status_code=403, detail="Sin permiso")
-
-    if payload.nuevo_estado in ("FINALIZADA", "ARCHIVADO") and user["rol"] not in ("Admin", "Supervisor"):
-        raise HTTPException(status_code=403, detail="Solo Supervisor/Admin")
-
-    if payload.nuevo_estado in ("ARCHIVADO", "NO REMITE SUAC") and (
-        payload.comentario is None or payload.comentario.strip() == ""
-    ):
-        raise HTTPException(status_code=400, detail="Comentario obligatorio")
-
-    # obtener estado actual
-    job = bq_client().query(
-        sql.GET_GESTION,
-        job_config=qparams([("id", "STRING", id_gestion)]),
-    )
-    rows = list(job.result())
-    if not rows:
-        raise HTTPException(status_code=404, detail="No existe")
-
-    current = dict(rows[0])
-    estado_anterior = current["estado"]
-
-    # actualizar estado + fechas
-    q_update = """
-    UPDATE `infra_gestion.gestiones`
-    SET
-      estado = @nuevo,
-      fecha_estado = CURRENT_TIMESTAMP(),
-      fecha_finalizacion = IF(@nuevo = 'FINALIZADA', CURRENT_DATE(), fecha_finalizacion),
-      updated_at = CURRENT_TIMESTAMP(),
-      updated_by = @actor
-    WHERE id_gestion = @id AND is_deleted = FALSE
-    """
-    bq_client().query(
-        q_update,
-        job_config=qparams([
-            ("nuevo", "STRING", payload.nuevo_estado),
-            ("actor", "STRING", user["email"]),
-            ("id", "STRING", id_gestion),
-        ]),
-    ).result()
-
-    # evento CAMBIO_ESTADO
-    bq_client().query(
-        sql.INSERT_EVENTO,
-        job_config=qparams([
-            ("id_evento", "STRING", str(uuid4())),
-            ("id_gestion", "STRING", id_gestion),
-            ("actor_email", "STRING", user["email"]),
-            ("actor_rol", "STRING", user["rol"]),
-            ("tipo_evento", "STRING", "CAMBIO_ESTADO"),
-            ("estado_anterior", "STRING", estado_anterior),
-            ("estado_nuevo", "STRING", payload.nuevo_estado),
-            ("comentario", "STRING", payload.comentario),
-            ("payload_json", "STRING", None),
-        ]),
-    ).result()
-
-    return {"ok": True}
-
-
-@router.delete("/{id_gestion}")
-def delete_gestion(id_gestion: str, user=Depends(require_user)):
-    if user["rol"] not in ("Admin", "Supervisor"):
-        raise HTTPException(status_code=403, detail="Sin permiso")
-
-    bq_client().query(
-        sql.SOFT_DELETE,
-        job_config=qparams([
-            ("id", "STRING", id_gestion),
-            ("actor", "STRING", user["email"]),
-        ]),
-    ).result()
-
-    bq_client().query(
-        sql.INSERT_EVENTO,
-        job_config=qparams([
-            ("id_evento", "STRING", str(uuid4())),
-            ("id_gestion", "STRING", id_gestion),
-            ("actor_email", "STRING", user["email"]),
-            ("actor_rol", "STRING", user["rol"]),
-            ("tipo_evento", "STRING", "BORRADO_LOGICO"),
-            ("estado_anterior", "STRING", None),
-            ("estado_nuevo", "STRING", None),
-            ("comentario", "STRING", None),
-            ("payload_json", "STRING", None),
-        ]),
-    ).result()
-
-    return {"ok": True}
+def get_gestion(
+    id_gestion: str,
+    user=Depends(require_roles("Admin", "Supervisor", "Operador", "Consulta")),
+):
+    cfg = qparams([("id_gestion", "STRING", id_gestion)])
+    g = _one(_fmt_tables(Q.GET_GESTION), cfg)
+    if not g:
+        raise HTTPException(status_code=404, detail="Gestión no encontrada")
+    return g
 
 
 @router.get("/{id_gestion}/eventos")
-def eventos(id_gestion: str, user=Depends(require_user)):
-    job = bq_client().query(
-        sql.GET_EVENTOS,
-        job_config=qparams([("id", "STRING", id_gestion)]),
-    )
-    rows = list(job.result())
-    return [dict(r) for r in rows]
+def list_eventos(
+    id_gestion: str,
+    user=Depends(require_roles("Admin", "Supervisor", "Operador", "Consulta")),
+):
+    cfg = qparams([("id_gestion", "STRING", id_gestion)])
+    return [dict(r) for r in _run(_fmt_tables(Q.LIST_EVENTOS), cfg)]
+
+@router.post("", status_code=201)
+@router.post("/", status_code=201)
+def create_gestion(
+    payload: GestionCreate,
+    user=Depends(require_roles("Admin", "Supervisor", "Operador")),
+):
+    cfg_geo = qparams([
+        ("departamento", "STRING", payload.departamento),
+        ("localidad", "STRING", payload.localidad),
+    ])
+    geo = _one(_fmt_tables(Q.GET_GEO), cfg_geo)
+    if not geo:
+        raise HTTPException(
+            status_code=400,
+            detail="Departamento/Localidad inválidos (no existen en geo_localidades)"
+        )
+
+    now_dt = datetime.utcnow()
+    today = date.today()
+
+    new_id = str(uuid4())
+    actor = user.get("email") or user.get("usuario") or ""
+    rol = user.get("rol")
+
+    # ✅ lat/lon en tabla son NUMERIC -> pasamos NUMERIC como string
+    lat_val = geo.get("lat")
+    lon_val = geo.get("lon")
+    lat_num = None if lat_val is None else str(lat_val)
+    lon_num = None if lon_val is None else str(lon_val)
+
+    cfg_ins = qparams([
+        ("id_gestion", "STRING", new_id),
+        ("nro_expediente", "STRING", payload.nro_expediente),
+        ("origen", "STRING", "APP"),
+
+        ("estado", "STRING", "INGRESADO"),
+        ("fecha_ingreso", "DATE", today),
+        ("fecha_estado", "TIMESTAMP", now_dt),
+        ("fecha_finalizacion", "DATE", None),
+
+        ("urgencia", "STRING", payload.urgencia or "Media"),
+
+        ("ministerio_agencia_id", "STRING", payload.ministerio_agencia_id),
+        ("organismo_id", "STRING", payload.organismo_id),
+        ("derivado_a_id", "STRING", None),
+
+        ("categoria_general_id", "STRING", payload.categoria_general_id),
+        ("subcategoria_id", "STRING", None),
+        ("tipo_demanda_principal_id", "STRING", None),
+        ("subtipo_detalle", "STRING", payload.subtipo_detalle),
+
+        ("detalle", "STRING", payload.detalle),
+        ("observaciones", "STRING", payload.observaciones),
+
+        ("geo_id", "STRING", geo.get("id_geo")),
+        ("departamento", "STRING", payload.departamento),
+        ("localidad", "STRING", payload.localidad),
+        ("direccion", "STRING", payload.direccion),
+
+        # 🔥 FIX
+        ("lat", "NUMERIC", lat_num),
+        ("lon", "NUMERIC", lon_num),
+
+        ("costo_estimado", "NUMERIC", payload.costo_estimado),
+        ("costo_moneda", "STRING", payload.costo_moneda),
+
+        ("created_at", "TIMESTAMP", now_dt),
+        ("created_by", "STRING", actor),
+        ("updated_at", "TIMESTAMP", now_dt),
+        ("updated_by", "STRING", actor),
+    ])
+    _run(_fmt_tables(Q.INSERT_GESTION), cfg_ins)
+
+    meta = {
+        "ministerio_agencia_id": payload.ministerio_agencia_id,
+        "categoria_general_id": payload.categoria_general_id,
+        "organismo_id": payload.organismo_id,
+        "subtipo_detalle": payload.subtipo_detalle,
+        "costo_estimado": payload.costo_estimado,
+        "costo_moneda": payload.costo_moneda,
+        "nro_expediente": payload.nro_expediente,
+        "departamento": payload.departamento,
+        "localidad": payload.localidad,
+        "geo_id": geo.get("id_geo"),
+    }
+
+    cfg_ev = qparams([
+        ("id_evento", "STRING", str(uuid4())),
+        ("id_gestion", "STRING", new_id),
+        ("fecha_evento", "TIMESTAMP", now_dt),
+        ("usuario", "STRING", actor),
+        ("rol_usuario", "STRING", rol),
+        ("tipo_evento", "STRING", "CREACION"),
+        ("estado_anterior", "STRING", None),
+        ("estado_nuevo", "STRING", "INGRESADO"),
+        ("campo_modificado", "STRING", None),
+        ("valor_anterior", "STRING", None),
+        ("valor_nuevo", "STRING", None),
+        ("comentario", "STRING", None),
+        ("metadata_json", "STRING", json.dumps(meta, ensure_ascii=False)),
+    ])
+    _run(_fmt_tables(Q.INSERT_EVENTO), cfg_ev)
+
+    return {"id_gestion": new_id}
+
+
+@router.post("/{id_gestion}/cambiar-estado")
+def cambiar_estado(
+    id_gestion: str,
+    payload: CambioEstado,
+    user=Depends(require_roles("Admin", "Supervisor", "Operador")),
+):
+    cfg_get = qparams([("id_gestion", "STRING", id_gestion)])
+    g = _one(_fmt_tables(Q.GET_GESTION), cfg_get)
+    if not g:
+        raise HTTPException(status_code=404, detail="Gestión no encontrada")
+
+    estado_anterior = g.get("estado")
+    now_dt = datetime.utcnow()
+    actor = user.get("email") or user.get("usuario") or ""
+    rol = user.get("rol")
+
+    cfg_upd = qparams([
+        ("id_gestion", "STRING", id_gestion),
+        ("nuevo_estado", "STRING", payload.nuevo_estado),
+        ("fecha_estado", "TIMESTAMP", now_dt),
+        ("derivado_a_id", "STRING", payload.derivado_a),
+        ("updated_at", "TIMESTAMP", now_dt),
+        ("updated_by", "STRING", actor),
+    ])
+    _run(_fmt_tables(Q.UPDATE_ESTADO_GESTION), cfg_upd)
+
+    meta = {
+        "derivado_a": payload.derivado_a,
+        "acciones_implementadas": payload.acciones_implementadas,
+    }
+
+    cfg_ev = qparams([
+        ("id_evento", "STRING", str(uuid4())),
+        ("id_gestion", "STRING", id_gestion),
+        ("fecha_evento", "TIMESTAMP", now_dt),
+        ("usuario", "STRING", actor),
+        ("rol_usuario", "STRING", rol),
+        ("tipo_evento", "STRING", "CAMBIO_ESTADO"),
+        ("estado_anterior", "STRING", estado_anterior),
+        ("estado_nuevo", "STRING", payload.nuevo_estado),
+        ("campo_modificado", "STRING", None),
+        ("valor_anterior", "STRING", None),
+        ("valor_nuevo", "STRING", None),
+        ("comentario", "STRING", payload.comentario),
+        ("metadata_json", "STRING", json.dumps(meta, ensure_ascii=False)),
+    ])
+    _run(_fmt_tables(Q.INSERT_EVENTO), cfg_ev)
+
+    return {"ok": True, "id_gestion": id_gestion, "estado": payload.nuevo_estado}
+
+
+@router.delete("/{id_gestion}")
+def delete_gestion(
+    id_gestion: str,
+    user=Depends(require_roles("Admin", "Supervisor")),
+):
+    now_dt = datetime.utcnow()
+    actor = user.get("email") or user.get("usuario") or ""
+    rol = user.get("rol")
+
+    cfg_del = qparams([
+        ("id_gestion", "STRING", id_gestion),
+        ("updated_at", "TIMESTAMP", now_dt),
+        ("updated_by", "STRING", actor),
+    ])
+    _run(_fmt_tables(Q.DELETE_GESTION), cfg_del)
+
+    cfg_ev = qparams([
+        ("id_evento", "STRING", str(uuid4())),
+        ("id_gestion", "STRING", id_gestion),
+        ("fecha_evento", "TIMESTAMP", now_dt),
+        ("usuario", "STRING", actor),
+        ("rol_usuario", "STRING", rol),
+        ("tipo_evento", "STRING", "ARCHIVO"),
+        ("estado_anterior", "STRING", None),
+        ("estado_nuevo", "STRING", None),
+        ("campo_modificado", "STRING", "is_deleted"),
+        ("valor_anterior", "STRING", "FALSE"),
+        ("valor_nuevo", "STRING", "TRUE"),
+        ("comentario", "STRING", "Borrado lógico desde UI"),
+        ("metadata_json", "STRING", json.dumps({}, ensure_ascii=False)),
+    ])
+    _run(_fmt_tables(Q.INSERT_EVENTO), cfg_ev)
+
+    return {"ok": True}

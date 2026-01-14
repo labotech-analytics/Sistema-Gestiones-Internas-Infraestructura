@@ -68,7 +68,7 @@
       <section id="view-gestiones" class="view">
         <div class="toolbar card">
           <div class="toolbar-left">
-            <button class="btn" type="button" onclick="loadGestiones()">Refrescar</button>
+            <button class="btn" type="button" onclick="loadGestiones(true)">Refrescar</button>
             <button class="btn primary" type="button" onclick="openNew()">Nueva gestión</button>
           </div>
 
@@ -92,11 +92,29 @@
               <label for="departamentoFilter">Departamento</label>
               <select id="departamentoFilter"><option value="">(Todos)</option></select>
             </div>
+
+            <div class="field">
+              <label for="localidadFilter">Localidad</label>
+              <select id="localidadFilter" disabled>
+                <option value="">(Todas)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="searchInput">Buscar</label>
+              <input id="searchInput" type="search" placeholder="Buscar en toda la tabla..." />
+            </div>
           </div>
         </div>
 
         <div class="subbar">
           <div id="pagerInfo" class="hint"></div>
+
+          <div class="pager">
+            <button class="btn" id="btnPrev" type="button">Anterior</button>
+            <button class="btn" id="btnNext" type="button">Siguiente</button>
+          </div>
+
           <div class="hint" id="hintTable">Tip: podés scrollear horizontalmente en celular.</div>
         </div>
 
@@ -184,6 +202,32 @@
         </div>
       </section>
 
+      <!-- DRAWER: DETALLE -->
+      <div id="drawer" class="drawer hidden" aria-hidden="true">
+        <div class="drawer-overlay" onclick="closeDrawer()"></div>
+        <aside class="drawer-panel" role="dialog" aria-modal="true">
+          <div class="drawer-head">
+            <div>
+              <div class="drawer-title" id="drawerTitle">Detalle</div>
+              <div class="drawer-sub" id="drawerSub"></div>
+            </div>
+            <button class="btn" type="button" onclick="closeDrawer()">Cerrar</button>
+          </div>
+
+          <div class="drawer-body">
+            <div class="drawer-section">
+              <h4 class="h4">Resumen</h4>
+              <div id="drawerSummary" class="kv"></div>
+            </div>
+
+            <div class="drawer-section">
+              <h4 class="h4">Movimientos</h4>
+              <div id="drawerEventos" class="timeline"></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
       <!-- MODAL: NUEVA GESTION -->
       <div id="modalNewGestion" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
         <div class="modal-overlay" onclick="closeModal('modalNewGestion')"></div>
@@ -220,6 +264,31 @@
               <input id="ng_direccion" type="text" placeholder="Calle y número (opcional)" />
             </label>
 
+            <!-- NUEVOS CAMPOS -->
+            <label>Organismo
+              <input id="ng_organismo_id" type="text" placeholder="organismo_id" />
+            </label>
+
+            <label>Costo
+              <input id="ng_costo_estimado" type="number" step="any" placeholder="Solo número" />
+            </label>
+
+            <label>Moneda
+              <select id="ng_costo_moneda">
+                <option value="ARS">Pesos (ARS)</option>
+                <option value="USD">USD</option>
+                <option value="OTRA">Otra</option>
+              </select>
+            </label>
+
+            <label class="span-2">Sticker nro de expediente
+              <input id="ng_nro_expediente" type="text" placeholder="Ej: EXP-2026-..." />
+            </label>
+
+            <label class="span-2">Subtipo Detalle
+              <textarea id="ng_subtipo_detalle" rows="3" placeholder="Explicá lo específico de la obra"></textarea>
+            </label>
+
             <label class="span-2">Detalle *
               <textarea id="ng_detalle" rows="4" placeholder="Describí la demanda"></textarea>
             </label>
@@ -240,15 +309,23 @@
         <div class="modal-overlay" onclick="closeModal('modalChangeState')"></div>
         <div class="modal-card" role="document">
           <div class="modal-head">
-            <h3 class="h3">Cambiar estado</h3>
+            <h3 class="h3">Modificar estado</h3>
             <button class="btn ghost" type="button" onclick="closeModal('modalChangeState')">Cerrar</button>
           </div>
 
           <input id="cs_id_gestion" type="hidden" />
 
           <div class="form-grid">
-            <label>Nuevo estado
+            <label>Estado
               <select id="cs_nuevo_estado"></select>
+            </label>
+
+            <label>Derivado a
+              <input id="cs_derivado_a" type="text" placeholder="Área / persona / organismo" />
+            </label>
+
+            <label class="span-2">Acciones implementadas
+              <textarea id="cs_acciones_implementadas" rows="3" placeholder="Qué se hizo / pasos realizados"></textarea>
             </label>
 
             <label class="span-2">Comentario (obligatorio en ARCHIVADO / NO REMITE SUAC)
