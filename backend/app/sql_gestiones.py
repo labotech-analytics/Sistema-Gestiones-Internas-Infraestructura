@@ -1,6 +1,5 @@
-# app/sql.py
+# app/sql_gestiones.py
 # Queries BigQuery (parameterized)
-
 # -------------------------
 # GESTIONES
 # -------------------------
@@ -300,9 +299,3 @@ VALUES (
   PARSE_JSON(@metadata_json)
 )
 """
-
-# -------------------------
-# USUARIOS
-# -------------------------
-# (Dejé tu sección de usuarios tal cual la tenías. Si tu archivo original tenía más queries
-#  debajo, mantenelas igual pegándolas acá tal cual estaban.)

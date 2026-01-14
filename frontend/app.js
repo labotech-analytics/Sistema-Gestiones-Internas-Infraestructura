@@ -12,6 +12,9 @@ const PAGE = { limit: 50, offset: 0, total: null };
 let LAST_ROWS = [];
 let LAST_SEARCH = "";
 
+// Usuarios cache
+let LAST_USERS = [];
+
 // Catálogos en memoria
 let CATALOGOS = {
   estados: [],
@@ -42,7 +45,20 @@ function setAppError(msg) {
   else { box.textContent = msg; show(box); }
 }
 
-function setAuthedUI(isAuthed) {
+function setUsersError(msg) {
+  const box = document.getElementById("usersError");
+  if (!box) return;
+  if (!msg) { box.textContent = ""; hide(box); }
+  else { box.textContent = msg; show(box); }
+}
+
+function setUsersHint(msg) {
+  const box = document.getElementById("usersHint");
+  if (!box) return;
+  box.textContent = msg || "";
+}
+
+function setAppAuthedUI(isAuthed) {
   const loginSection = document.getElementById("loginSection");
   const appSection = document.getElementById("appSection");
   const btnLogout = document.getElementById("btnLogout");
@@ -69,17 +85,15 @@ function isAdmin() { return String(CURRENT_USER?.rol || "").toLowerCase() === "a
 function isSupervisor() { return String(CURRENT_USER?.rol || "").toLowerCase() === "supervisor"; }
 
 // ============================
-// Robust field getter (fix para detalle/costo vacíos)
+// Robust field getter
 // ============================
 function pick(row, ...keys) {
   if (!row || typeof row !== "object") return undefined;
 
-  // 1) exact
   for (const k of keys) {
     if (k in row) return row[k];
   }
 
-  // 2) case-insensitive lookup
   const lowerMap = new Map();
   for (const k of Object.keys(row)) lowerMap.set(k.toLowerCase(), k);
 
@@ -88,13 +102,11 @@ function pick(row, ...keys) {
     if (real) return row[real];
   }
 
-  // 3) try variants (snake/camel/upper)
   const variants = [];
   for (const k of keys) {
     const s = String(k);
     variants.push(s.toUpperCase());
     variants.push(s.toLowerCase());
-    // camelCase guess
     variants.push(s.replace(/_([a-z])/g, (_, c) => c.toUpperCase()));
   }
   for (const v of variants) {
@@ -123,6 +135,17 @@ function fmtDateLike(v) {
   } catch {
     return String(v);
   }
+}
+
+// ============================
+// Debounce (para búsqueda backend)
+// ============================
+function debounce(fn, ms = 250) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
 }
 
 // ============================
@@ -161,7 +184,7 @@ async function onGoogleSignIn(response) {
   try {
     saveToken(response.credential);
 
-    setAuthedUI(true);
+    setAppAuthedUI(true);
     document.getElementById("userBox").innerText = "Validando usuario...";
 
     await validateAuthOrThrow();
@@ -172,12 +195,12 @@ async function onGoogleSignIn(response) {
     console.error(e);
     if (e?.__auth_error) {
       saveToken(null);
-      setAuthedUI(false);
+      setAppAuthedUI(false);
       document.getElementById("userBox").innerText = "";
       setLoginError(e.message || "No autorizado.");
       return;
     }
-    setAuthedUI(true);
+    setAppAuthedUI(true);
     setAppError("Autenticación OK, pero falló la carga de datos. Detalle: " + (e?.message || String(e)));
   }
 }
@@ -185,7 +208,7 @@ async function onGoogleSignIn(response) {
 function logout() {
   saveToken(null);
   CURRENT_USER = null;
-  setAuthedUI(false);
+  setAppAuthedUI(false);
   document.getElementById("userBox").innerText = "";
   setLoginError("");
   setAppError("");
@@ -230,15 +253,12 @@ async function api(path, opts = {}) {
   return bodyText;
 }
 
-async function apiTry(path, opts) {
-  try { return await api(path, opts); }
-  catch (e) { return { __error: e }; }
-}
-
 // ============================
 // Boot / Wire
 // ============================
 let WIRED = false;
+const debouncedSearchReload = debounce(() => loadGestiones(true), 250);
+
 function wireUI() {
   if (WIRED) return;
   WIRED = true;
@@ -250,9 +270,10 @@ function wireUI() {
   document.getElementById("departamentoFilter")?.addEventListener("change", onDepartamentoFilterChange);
   document.getElementById("localidadFilter")?.addEventListener("change", () => loadGestiones(true));
 
+  // búsqueda server-side: actualiza total/paginación
   document.getElementById("searchInput")?.addEventListener("input", (e) => {
     LAST_SEARCH = e.target.value || "";
-    applySearchAndRender();
+    debouncedSearchReload();
   });
 
   document.getElementById("ng_departamento")?.addEventListener("change", onNewGestionDeptoChange);
@@ -307,7 +328,6 @@ async function bootData() {
   setAppError("");
   await loadCatalogos();
   await loadGestiones(true);
-  if (isAdmin()) await loadUsers().catch(() => {});
 }
 
 // ============================
@@ -328,7 +348,17 @@ function setTab(tab) {
   };
   Object.entries(panes).forEach(([k, el]) => el && el.classList.toggle("hidden", k !== tab));
 
-  if (tab === "usuarios" && isAdmin()) loadUsers().catch(() => {});
+  // Auto-load usuarios al entrar al tab
+  if (tab === "usuarios") {
+    if (!isAdmin()) {
+      setTab("gestiones");
+      return;
+    }
+    loadUsers().catch(e => {
+      console.error(e);
+      setAppError("No se pudo cargar Usuarios. " + (e?.message || String(e)));
+    });
+  }
 }
 
 // ============================
@@ -524,12 +554,14 @@ function updatePagerInfo(resp, rows) {
 }
 
 function currentFilters() {
+  const q = String(LAST_SEARCH || "").trim();
   return {
     estado: document.getElementById("estadoFilter")?.value || null,
     ministerio: document.getElementById("ministerioFilter")?.value || null,
     categoria: document.getElementById("categoriaFilter")?.value || null,
     departamento: document.getElementById("departamentoFilter")?.value || null,
     localidad: document.getElementById("localidadFilter")?.value || null,
+    q: q || null,
   };
 }
 
@@ -537,7 +569,7 @@ async function loadGestiones(resetOffset = false) {
   setAppError("");
   if (resetOffset) PAGE.offset = 0;
 
-  const { estado, ministerio, categoria, departamento, localidad } = currentFilters();
+  const { estado, ministerio, categoria, departamento, localidad, q } = currentFilters();
 
   const qs = new URLSearchParams();
   if (estado) qs.set("estado", estado);
@@ -545,6 +577,7 @@ async function loadGestiones(resetOffset = false) {
   if (categoria) qs.set("categoria", categoria);
   if (departamento) qs.set("departamento", departamento);
   if (localidad) qs.set("localidad", localidad);
+  if (q) qs.set("q", q);
 
   qs.set("limit", String(PAGE.limit));
   qs.set("offset", String(PAGE.offset));
@@ -554,7 +587,7 @@ async function loadGestiones(resetOffset = false) {
 
   LAST_ROWS = rows;
   updatePagerInfo(resp, rows);
-  applySearchAndRender();
+  renderGrid(rows);
 }
 
 function pagePrev() {
@@ -564,30 +597,6 @@ function pagePrev() {
 function pageNext() {
   PAGE.offset = PAGE.offset + PAGE.limit;
   loadGestiones(false);
-}
-
-function applySearchAndRender() {
-  const q = String(LAST_SEARCH || "").trim().toLowerCase();
-  if (!q) return renderGrid(LAST_ROWS);
-
-  const filtered = (LAST_ROWS || []).filter((r) => {
-    const hay = [
-      pick(r, "id_gestion"),
-      pick(r, "departamento"),
-      pick(r, "localidad"),
-      pick(r, "estado"),
-      pick(r, "urgencia"),
-      pick(r, "ministerio_agencia_id"),
-      pick(r, "categoria_general_id"),
-      pick(r, "detalle"),
-      pick(r, "costo_estimado"),
-      pick(r, "costo_moneda"),
-      pick(r, "nro_expediente"),
-    ].map(x => String(x ?? "").toLowerCase()).join(" | ");
-    return hay.includes(q);
-  });
-
-  renderGrid(filtered);
 }
 
 function renderGrid(rows) {
@@ -736,22 +745,22 @@ async function openDetalle(id) {
 
     const arr = Array.isArray(ev) ? ev : [];
     arr.sort((a, b) => {
-      const ta = new Date(pick(a, "fecha_evento", "ts_evento") || 0).getTime();
-      const tb = new Date(pick(b, "fecha_evento", "ts_evento") || 0).getTime();
+      const ta = new Date(pick(a, "fecha_evento") || 0).getTime();
+      const tb = new Date(pick(b, "fecha_evento") || 0).getTime();
       return (tb || 0) - (ta || 0);
     });
 
     const timeline = arr.map((e) => {
-      const tipo = pick(e, "tipo_evento", "tipo_evento") || "";
-      const when = fmtDateLike(pick(e, "fecha_evento", "ts_evento") || "");
-      const actor = pick(e, "usuario", "actor_email") || "";
+      const tipo = pick(e, "tipo_evento") || "";
+      const when = fmtDateLike(pick(e, "fecha_evento") || "");
+      const actor = pick(e, "usuario") || "";
       const rol = pick(e, "rol_usuario") || "";
       const estA = pick(e, "estado_anterior") || "";
       const estN = pick(e, "estado_nuevo") || "";
       const comentario = pick(e, "comentario") || "";
 
       let extra = "";
-      const meta = pick(e, "metadata_json", "payload_json");
+      const meta = pick(e, "metadata_json");
       if (meta) {
         try {
           const obj = (typeof meta === "string") ? JSON.parse(meta) : meta;
@@ -790,7 +799,7 @@ async function openDetalle(id) {
 
 // ============================
 // Eventos (modal raw JSON)
-/// ============================
+// ============================
 async function openEventos(id) {
   const ev = await api(`/gestiones/${encodeURIComponent(id)}/eventos`);
   document.getElementById("ev_title").textContent = `Eventos · ${id}`;
@@ -840,6 +849,12 @@ async function submitChangeState() {
 
   if (!id) return alert("Falta id_gestion");
   if (!nuevo) return alert("Seleccioná un estado");
+
+  // Regla UI (backend también deberías validar, pero acá te lo fuerzo)
+  const nuevoUp = String(nuevo || "").toUpperCase();
+  if ((nuevoUp === "ARCHIVADO" || nuevoUp === "NO REMITE SUAC") && (!comentario || String(comentario).trim() === "")) {
+    return alert("Comentario es obligatorio para ARCHIVADO / NO REMITE SUAC");
+  }
 
   await api(`/gestiones/${encodeURIComponent(id)}/cambiar-estado`, {
     method: "POST",
@@ -900,6 +915,7 @@ async function submitNewGestion() {
   if (!localidad) return alert("Seleccioná una localidad");
   if (!detalle || detalle.trim() === "") return alert("Detalle es obligatorio");
 
+  // valida geo
   await api(`/catalogos/geo?departamento=${encodeURIComponent(departamento)}&localidad=${encodeURIComponent(localidad)}`);
 
   const payload = {
@@ -928,15 +944,221 @@ async function submitNewGestion() {
 }
 
 // ============================
-// Usuarios (placeholder por ahora)
+// USUARIOS (Admin)
 // ============================
-async function loadUsers() { if (!isAdmin()) return; }
-function upsertUser() { alert("Usuarios: lo conectamos cuando definamos endpoints definitivos."); }
+
+function normalizeEmail(s) {
+  return String(s || "").trim().toLowerCase();
+}
+
+function boolToYesNo(v) {
+  return (v === true || String(v).toLowerCase() === "true") ? "Sí" : "No";
+}
+
 function clearUserForm() {
-  document.getElementById("u_email").value = "";
-  document.getElementById("u_nombre").value = "";
-  document.getElementById("u_rol").value = "";
-  document.getElementById("u_activo").checked = true;
+  setUsersError("");
+  setUsersHint("");
+
+  const email = document.getElementById("u_email");
+  const nombre = document.getElementById("u_nombre");
+  const rol = document.getElementById("u_rol");
+  const activo = document.getElementById("u_activo");
+
+  if (email) { email.value = ""; email.readOnly = false; }
+  if (nombre) nombre.value = "";
+  if (rol) rol.value = "";
+  if (activo) activo.checked = true;
+
+  // marca modo "create"
+  if (email) email.dataset.mode = "create";
+}
+
+function fillUserForm(u) {
+  const email = document.getElementById("u_email");
+  const nombre = document.getElementById("u_nombre");
+  const rol = document.getElementById("u_rol");
+  const activo = document.getElementById("u_activo");
+
+  if (email) {
+    email.value = pick(u, "email") || "";
+    email.readOnly = true;
+    email.dataset.mode = "edit";
+  }
+  if (nombre) nombre.value = pick(u, "nombre") || "";
+  if (rol) rol.value = pick(u, "rol") || "";
+  if (activo) activo.checked = (pick(u, "activo") === true || String(pick(u, "activo")).toLowerCase() === "true");
+}
+
+async function loadUsers() {
+  if (!isAdmin()) return;
+  setUsersError("");
+  setUsersHint("Cargando...");
+
+  try {
+    const rows = await api(`/usuarios/`);
+    LAST_USERS = Array.isArray(rows) ? rows : [];
+    renderUsersGrid(LAST_USERS);
+    setUsersHint(`Usuarios: ${LAST_USERS.length}`);
+  } catch (e) {
+    console.error(e);
+    setUsersHint("");
+    setUsersError("No se pudo cargar usuarios. " + (e?.message || String(e)));
+  }
+}
+
+function renderUsersGrid(rows) {
+  const table = document.getElementById("usersGrid");
+  if (!table) return;
+  table.innerHTML = "";
+
+  const cols = [
+    { key: "email", label: "Email" },
+    { key: "nombre", label: "Nombre" },
+    { key: "rol", label: "Rol" },
+    { key: "activo", label: "Activo" },
+    { key: "updated_at", label: "Actualizado" },
+    { key: "updated_by", label: "Actualizó" },
+  ];
+
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  cols.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c.label;
+    trh.appendChild(th);
+  });
+  const thA = document.createElement("th");
+  thA.textContent = "Acciones";
+  trh.appendChild(thA);
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+
+  (rows || []).forEach(u => {
+    const tr = document.createElement("tr");
+
+    cols.forEach(c => {
+      const td = document.createElement("td");
+      let v = pick(u, c.key);
+
+      if (c.key === "activo") v = boolToYesNo(v);
+      if (c.key === "updated_at") v = fmtDateLike(v);
+
+      td.textContent = (v == null ? "" : String(v));
+      tr.appendChild(td);
+    });
+
+    const email = normalizeEmail(pick(u, "email"));
+    const activo = (pick(u, "activo") === true || String(pick(u, "activo")).toLowerCase() === "true");
+
+    const tdA = document.createElement("td");
+    tdA.className = "actions";
+    tdA.innerHTML = `
+      <div class="actions-wrap">
+        <button class="btn" type="button" onclick="editUser('${escapeHtml(email)}')">Editar</button>
+        ${
+          activo
+            ? `<button class="btn btn-danger" type="button" onclick="disableUser('${escapeHtml(email)}')">Deshabilitar</button>`
+            : `<span class="hint">Deshabilitado</span>`
+        }
+      </div>
+    `;
+    tr.appendChild(tdA);
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+}
+
+function findUserByEmail(email) {
+  const e = normalizeEmail(email);
+  return (LAST_USERS || []).find(u => normalizeEmail(pick(u, "email")) === e) || null;
+}
+
+function editUser(email) {
+  setUsersError("");
+  setUsersHint("Editando usuario…");
+  const u = findUserByEmail(email);
+  if (!u) {
+    setUsersHint("");
+    return alert("No se encontró el usuario en la lista.");
+  }
+  fillUserForm(u);
+  setUsersHint(`Editando: ${normalizeEmail(email)}`);
+}
+
+async function upsertUser() {
+  if (!isAdmin()) return;
+
+  setUsersError("");
+  setUsersHint("");
+
+  const emailEl = document.getElementById("u_email");
+  const nombreEl = document.getElementById("u_nombre");
+  const rolEl = document.getElementById("u_rol");
+  const activoEl = document.getElementById("u_activo");
+
+  const email = normalizeEmail(emailEl?.value);
+  const nombre = (nombreEl?.value || "").trim() || null;
+  const rol = String(rolEl?.value || "").trim();
+  const activo = !!activoEl?.checked;
+
+  if (!email) return setUsersError("Email es obligatorio.");
+  if (!rol) return setUsersError("Rol es obligatorio.");
+
+  // Si el email está readonly => estamos editando
+  const isEditMode = !!emailEl?.readOnly || emailEl?.dataset.mode === "edit";
+
+  try {
+    if (isEditMode) {
+      // UPDATE
+      await api(`/usuarios/${encodeURIComponent(email)}`, {
+        method: "PUT",
+        body: { nombre, rol, activo },
+      });
+      setUsersHint("Usuario actualizado.");
+    } else {
+      // CREATE
+      await api(`/usuarios/`, {
+        method: "POST",
+        body: { email, nombre, rol, activo },
+      });
+      setUsersHint("Usuario creado.");
+    }
+
+    await loadUsers();
+    clearUserForm();
+  } catch (e) {
+    console.error(e);
+
+    // Caso común: 409 usuario ya existe
+    if (e?.status === 409) {
+      setUsersError("El usuario ya existe. Usá Editar desde la lista o cambiá el email.");
+      return;
+    }
+
+    setUsersError("No se pudo guardar. " + (e?.message || String(e)));
+  }
+}
+
+async function disableUser(email) {
+  if (!isAdmin()) return;
+  const e = normalizeEmail(email);
+  const ok = confirm(`¿Deshabilitar usuario?\n\n${e}`);
+  if (!ok) return;
+
+  try {
+    await api(`/usuarios/${encodeURIComponent(e)}`, { method: "DELETE" });
+    setUsersHint("Usuario deshabilitado.");
+    await loadUsers();
+    const currentFormEmail = normalizeEmail(document.getElementById("u_email")?.value);
+    if (currentFormEmail === e) clearUserForm();
+  } catch (err) {
+    console.error(err);
+    setUsersError("No se pudo deshabilitar. " + (err?.message || String(err)));
+  }
 }
 
 // ============================
@@ -944,18 +1166,24 @@ function clearUserForm() {
 // ============================
 document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("userBox").innerText = "";
-  setAuthedUI(false);
+  setAppAuthedUI(false);
   setLoginError("");
   setAppError("");
+  setUsersError("");
+  setUsersHint("");
 
   wireUI();
   initGoogleButton();
+
+  // Modo create por defecto en formulario
+  const emailEl = document.getElementById("u_email");
+  if (emailEl) emailEl.dataset.mode = "create";
 
   const t = readToken();
   if (t) {
     try {
       saveToken(t);
-      setAuthedUI(true);
+      setAppAuthedUI(true);
       document.getElementById("userBox").innerText = "Restaurando sesión...";
       await validateAuthOrThrow();
       await bootData();
@@ -983,6 +1211,9 @@ window.setTab = setTab;
 window.openDetalle = openDetalle;
 window.closeDrawer = closeDrawer;
 
+// Usuarios
+window.loadUsers = loadUsers;
 window.upsertUser = upsertUser;
 window.clearUserForm = clearUserForm;
-window.loadUsers = loadUsers;
+window.editUser = editUser;
+window.disableUser = disableUser;
