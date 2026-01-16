@@ -23,6 +23,10 @@ let CATALOGOS = {
   categorias: [],
   departamentos: [],
   localidadesByDepto: new Map(),
+
+  // ✅ Nuevos (por ahora hardcode; si creás endpoints, lo pasamos a backend)
+  tiposGestion: [],
+  canalesOrigen: [],
 };
 
 // ============================
@@ -30,6 +34,10 @@ let CATALOGOS = {
 // ============================
 function show(el) { el?.classList.remove("hidden"); }
 function hide(el) { el?.classList.add("hidden"); }
+
+function $id(id) { return document.getElementById(id); }
+function setVal(id, v) { const el = $id(id); if (el) el.value = v; }
+function getVal(id, fallback = "") { const el = $id(id); return el ? (el.value ?? fallback) : fallback; }
 
 function setLoginError(msg) {
   const box = document.getElementById("loginError");
@@ -267,10 +275,14 @@ function wireUI() {
   document.getElementById("ministerioFilter")?.addEventListener("change", () => loadGestiones(true));
   document.getElementById("categoriaFilter")?.addEventListener("change", () => loadGestiones(true));
 
+  // ✅ NUEVOS
+  document.getElementById("tipoGestionFilter")?.addEventListener("change", () => loadGestiones(true));
+  document.getElementById("canalOrigenFilter")?.addEventListener("change", () => loadGestiones(true));
+
   document.getElementById("departamentoFilter")?.addEventListener("change", onDepartamentoFilterChange);
   document.getElementById("localidadFilter")?.addEventListener("change", () => loadGestiones(true));
 
-  // búsqueda server-side: actualiza total/paginación
+  // búsqueda server-side
   document.getElementById("searchInput")?.addEventListener("input", (e) => {
     LAST_SEARCH = e.target.value || "";
     debouncedSearchReload();
@@ -348,7 +360,6 @@ function setTab(tab) {
   };
   Object.entries(panes).forEach(([k, el]) => el && el.classList.toggle("hidden", k !== tab));
 
-  // Auto-load usuarios al entrar al tab
   if (tab === "usuarios") {
     if (!isAdmin()) {
       setTab("gestiones");
@@ -397,6 +408,27 @@ function closeDrawer() {
 // ============================
 // Catálogos
 // ============================
+function defaultTiposGestion() {
+  return [
+    { id: "CONSULTA", nombre: "Consulta" },
+    { id: "DEMANDA", nombre: "Demanda" },
+    { id: "PROYECTO", nombre: "Proyecto" },
+    { id: "EXPEDIENTE", nombre: "Expediente" },
+    { id: "OTRO", nombre: "Otro" },
+  ];
+}
+
+function defaultCanalesOrigen() {
+  return [
+    { id: "AGENDA_REUNIONES", nombre: "Agenda de reuniones" },
+    { id: "TELEFONO_FUNCIONARIO", nombre: "Teléfono del funcionario" },
+    { id: "ENCUENTRO_EVENTO", nombre: "Encuentro / acto / evento" },
+    { id: "WHATSAPP", nombre: "WhatsApp" },
+    { id: "MAIL", nombre: "Mail" },
+    { id: "OTRO", nombre: "Otro" },
+  ];
+}
+
 async function loadCatalogos() {
   const [estados, urgencias, ministerios, categorias, departamentos] = await Promise.all([
     api(`/catalogos/estados`),
@@ -412,15 +444,28 @@ async function loadCatalogos() {
   CATALOGOS.categorias = categorias || [];
   CATALOGOS.departamentos = departamentos || [];
 
+  // ✅ Nuevos (front-only)
+  CATALOGOS.tiposGestion = defaultTiposGestion();
+  CATALOGOS.canalesOrigen = defaultCanalesOrigen();
+
   fillSelectFromCatalog("estadoFilter", CATALOGOS.estados, { valueKey: "nombre", labelKey: "nombre", firstLabel: "(Todos)" });
   fillSelectFromCatalog("ministerioFilter", CATALOGOS.ministerios, { valueKey: "id", labelKey: "nombre", firstLabel: "(Todos)" });
   fillSelectFromCatalog("categoriaFilter", CATALOGOS.categorias, { valueKey: "id", labelKey: "nombre", firstLabel: "(Todos)" });
   fillSelectFromList("departamentoFilter", CATALOGOS.departamentos, "(Todos)");
 
+  // ✅ Nuevos filtros
+  fillSelectFromCatalog("tipoGestionFilter", CATALOGOS.tiposGestion, { valueKey: "id", labelKey: "nombre", firstLabel: "(Todos)" });
+  fillSelectFromCatalog("canalOrigenFilter", CATALOGOS.canalesOrigen, { valueKey: "id", labelKey: "nombre", firstLabel: "(Todos)" });
+
+  // Modal new
   fillSelectFromCatalog("ng_ministerio", CATALOGOS.ministerios, { valueKey: "id", labelKey: "nombre", firstLabel: "(Seleccionar)" });
   fillSelectFromCatalog("ng_categoria", CATALOGOS.categorias, { valueKey: "id", labelKey: "nombre", firstLabel: "(Seleccionar)" });
   fillSelectFromCatalog("ng_urgencia", CATALOGOS.urgencias, { valueKey: "nombre", labelKey: "nombre", firstLabel: "(Seleccionar)" });
   fillSelectFromList("ng_departamento", CATALOGOS.departamentos, "(Seleccionar)");
+
+  // ✅ Modal nuevos selects
+  fillSelectFromCatalog("ng_tipo_gestion", CATALOGOS.tiposGestion, { valueKey: "id", labelKey: "nombre", firstLabel: "(Seleccionar)" });
+  fillSelectFromCatalog("ng_canal_origen", CATALOGOS.canalesOrigen, { valueKey: "id", labelKey: "nombre", firstLabel: "(Seleccionar)" });
 
   fillSelectFromCatalog("cs_nuevo_estado", CATALOGOS.estados, { valueKey: "nombre", labelKey: "nombre", firstLabel: "(Seleccionar)" });
 
@@ -479,7 +524,7 @@ async function getLocalidadesByDepto(departamento) {
 }
 
 async function onNewGestionDeptoChange() {
-  const depto = document.getElementById("ng_departamento").value || "";
+  const depto = document.getElementById("ng_departamento")?.value || "";
   const selLoc = document.getElementById("ng_localidad");
   if (!selLoc) return;
 
@@ -561,6 +606,11 @@ function currentFilters() {
     categoria: document.getElementById("categoriaFilter")?.value || null,
     departamento: document.getElementById("departamentoFilter")?.value || null,
     localidad: document.getElementById("localidadFilter")?.value || null,
+
+    // ✅ nuevos
+    tipo_gestion: document.getElementById("tipoGestionFilter")?.value || null,
+    canal_origen: document.getElementById("canalOrigenFilter")?.value || null,
+
     q: q || null,
   };
 }
@@ -569,7 +619,7 @@ async function loadGestiones(resetOffset = false) {
   setAppError("");
   if (resetOffset) PAGE.offset = 0;
 
-  const { estado, ministerio, categoria, departamento, localidad, q } = currentFilters();
+  const { estado, ministerio, categoria, departamento, localidad, q, tipo_gestion, canal_origen } = currentFilters();
 
   const qs = new URLSearchParams();
   if (estado) qs.set("estado", estado);
@@ -577,6 +627,8 @@ async function loadGestiones(resetOffset = false) {
   if (categoria) qs.set("categoria", categoria);
   if (departamento) qs.set("departamento", departamento);
   if (localidad) qs.set("localidad", localidad);
+  if (tipo_gestion) qs.set("tipo_gestion", tipo_gestion);
+  if (canal_origen) qs.set("canal_origen", canal_origen);
   if (q) qs.set("q", q);
 
   qs.set("limit", String(PAGE.limit));
@@ -608,6 +660,8 @@ function renderGrid(rows) {
 
   const minMap = new Map((CATALOGOS.ministerios || []).map((m) => [m.id, m.nombre]));
   const catMap = new Map((CATALOGOS.categorias || []).map((c) => [c.id, c.nombre]));
+  const tipoMap = new Map((CATALOGOS.tiposGestion || []).map((t) => [t.id, t.nombre]));
+  const canalMap = new Map((CATALOGOS.canalesOrigen || []).map((c) => [c.id, c.nombre]));
 
   const cols = [
     { key: "id_gestion", label: "ID" },
@@ -617,6 +671,11 @@ function renderGrid(rows) {
     { key: "urgencia", label: "Urgencia" },
     { key: "ministerio_agencia_id", label: "Ministerio/Agencia" },
     { key: "categoria_general_id", label: "Categoría" },
+
+    // ✅ nuevos
+    { key: "tipo_gestion", label: "Tipo" },
+    { key: "canal_origen", label: "Canal" },
+
     { key: "detalle", label: "Detalle" },
     { key: "costo_estimado", label: "Costo" },
     { key: "fecha_ingreso", label: "Ingreso" },
@@ -650,6 +709,12 @@ function renderGrid(rows) {
       } else if (c.key === "categoria_general_id") {
         const id = pick(r, "categoria_general_id");
         td.textContent = id ? (catMap.get(id) || id) : "";
+      } else if (c.key === "tipo_gestion") {
+        const id = pick(r, "tipo_gestion");
+        td.textContent = id ? (tipoMap.get(id) || id) : "";
+      } else if (c.key === "canal_origen") {
+        const id = pick(r, "canal_origen");
+        td.textContent = id ? (canalMap.get(id) || id) : "";
       } else if (c.key === "detalle") {
         const txt = String(pick(r, "detalle") ?? "");
         td.innerHTML = `<div class="cell-wrap" title="${escapeHtml(txt)}">${escapeHtml(txt)}</div>`;
@@ -712,11 +777,18 @@ async function openDetalle(id) {
 
     const minMap = new Map((CATALOGOS.ministerios || []).map((m) => [m.id, m.nombre]));
     const catMap = new Map((CATALOGOS.categorias || []).map((c) => [c.id, c.nombre]));
+    const tipoMap = new Map((CATALOGOS.tiposGestion || []).map((t) => [t.id, t.nombre]));
+    const canalMap = new Map((CATALOGOS.canalesOrigen || []).map((c) => [c.id, c.nombre]));
 
     const ministerioId = pick(g, "ministerio_agencia_id");
     const categoriaId = pick(g, "categoria_general_id");
     const ministerioNombre = ministerioId ? (minMap.get(ministerioId) || ministerioId) : "";
     const categoriaNombre = categoriaId ? (catMap.get(categoriaId) || categoriaId) : "";
+
+    const tipoId = pick(g, "tipo_gestion");
+    const canalId = pick(g, "canal_origen");
+    const tipoNombre = tipoId ? (tipoMap.get(tipoId) || tipoId) : "";
+    const canalNombre = canalId ? (canalMap.get(canalId) || canalId) : "";
 
     const costo = pick(g, "costo_estimado");
     const moneda = pick(g, "costo_moneda");
@@ -726,6 +798,8 @@ async function openDetalle(id) {
       ["Urgencia", pick(g, "urgencia")],
       ["Ministerio/Agencia", ministerioNombre],
       ["Categoría", categoriaNombre],
+      ["Tipo de gestión", tipoNombre],
+      ["Canal origen", canalNombre],
       ["Detalle", pick(g, "detalle")],
       ["Subtipo detalle", pick(g, "subtipo_detalle")],
       ["Costo", (costo != null && costo !== "" ? `${costo}${moneda ? " " + moneda : ""}` : "")],
@@ -850,7 +924,6 @@ async function submitChangeState() {
   if (!id) return alert("Falta id_gestion");
   if (!nuevo) return alert("Seleccioná un estado");
 
-  // Regla UI (backend también deberías validar, pero acá te lo fuerzo)
   const nuevoUp = String(nuevo || "").toUpperCase();
   if ((nuevoUp === "ARCHIVADO" || nuevoUp === "NO REMITE SUAC") && (!comentario || String(comentario).trim() === "")) {
     return alert("Comentario es obligatorio para ARCHIVADO / NO REMITE SUAC");
@@ -869,91 +942,104 @@ async function submitChangeState() {
 // Nueva gestión
 // ============================
 function openNew() {
-  document.getElementById("ng_ministerio").value = "";
-  document.getElementById("ng_categoria").value = "";
-  document.getElementById("ng_urgencia").value = "Media";
+  setVal("ng_ministerio", "");
+  setVal("ng_categoria", "");
+  setVal("ng_urgencia", "Media");
 
-  document.getElementById("ng_departamento").value = "";
-  document.getElementById("ng_localidad").innerHTML = `<option value="">(Seleccionar)</option>`;
+  // ✅ nuevos
+  setVal("ng_tipo_gestion", "");
+  setVal("ng_canal_origen", "");
 
-  document.getElementById("ng_direccion").value = "";
-  document.getElementById("ng_detalle").value = "";
-  document.getElementById("ng_observaciones").value = "";
+  setVal("ng_departamento", "");
 
-  document.getElementById("ng_organismo_id").value = "";
-  document.getElementById("ng_subtipo_detalle").value = "";
-  document.getElementById("ng_costo_estimado").value = "";
-  document.getElementById("ng_costo_moneda").value = "ARS";
-  document.getElementById("ng_nro_expediente").value = "";
+  const loc = document.getElementById("ng_localidad");
+  if (loc) loc.innerHTML = `<option value="">(Seleccionar)</option>`;
+
+  setVal("ng_direccion", "");
+  setVal("ng_detalle", "");
+  setVal("ng_observaciones", "");
+
+  setVal("ng_organismo_id", "");
+  setVal("ng_subtipo_detalle", "");
+  setVal("ng_costo_estimado", "");
+  setVal("ng_costo_moneda", "ARS");
+  setVal("ng_nro_expediente", "");
 
   openModal("modalNewGestion");
 }
 
 async function submitNewGestion() {
-  const ministerio = document.getElementById("ng_ministerio").value;
-  const categoria = document.getElementById("ng_categoria").value;
-  const urgencia = document.getElementById("ng_urgencia").value || "Media";
-  const departamento = document.getElementById("ng_departamento").value;
-  const localidad = document.getElementById("ng_localidad").value;
-  const direccion = document.getElementById("ng_direccion").value || null;
+  try {
+    const ministerio = getVal("ng_ministerio");
+    const categoria = getVal("ng_categoria");
+    const urgencia = getVal("ng_urgencia") || "Media";
 
-  const detalle = document.getElementById("ng_detalle").value;
-  const observaciones = document.getElementById("ng_observaciones").value || null;
+    // ✅ nuevos
+    const tipo_gestion = getVal("ng_tipo_gestion", "") || null;
+    const canal_origen = getVal("ng_canal_origen", "") || null;
 
-  const organismo_id = document.getElementById("ng_organismo_id").value || null;
-  const subtipo_detalle = document.getElementById("ng_subtipo_detalle").value || null;
+    const departamento = getVal("ng_departamento");
+    const localidad = getVal("ng_localidad");
+    const direccion = getVal("ng_direccion", "") || null;
 
-  const costo_estimado_raw = document.getElementById("ng_costo_estimado").value;
-  const costo_estimado = (costo_estimado_raw === "" || costo_estimado_raw == null) ? null : Number(costo_estimado_raw);
+    const detalle = getVal("ng_detalle");
+    const observaciones = getVal("ng_observaciones", "") || null;
 
-  const costo_moneda = document.getElementById("ng_costo_moneda").value || "ARS";
-  const nro_expediente = document.getElementById("ng_nro_expediente").value || null;
+    const organismo_id = getVal("ng_organismo_id", "") || null;
+    const subtipo_detalle = getVal("ng_subtipo_detalle", "") || null;
 
-  if (!ministerio) return alert("Seleccioná un ministerio/agencia");
-  if (!categoria) return alert("Seleccioná una categoría");
-  if (!departamento) return alert("Seleccioná un departamento");
-  if (!localidad) return alert("Seleccioná una localidad");
-  if (!detalle || detalle.trim() === "") return alert("Detalle es obligatorio");
+    const costo_estimado_raw = getVal("ng_costo_estimado", "");
+    const costo_estimado = (costo_estimado_raw === "" || costo_estimado_raw == null) ? null : Number(costo_estimado_raw);
 
-  // valida geo
-  await api(`/catalogos/geo?departamento=${encodeURIComponent(departamento)}&localidad=${encodeURIComponent(localidad)}`);
+    const costo_moneda = getVal("ng_costo_moneda") || "ARS";
+    const nro_expediente = getVal("ng_nro_expediente", "") || null;
 
-  const payload = {
-    ministerio_agencia_id: ministerio,
-    categoria_general_id: categoria,
-    urgencia,
-    detalle,
-    observaciones,
-    departamento,
-    localidad,
-    direccion,
+    if (!ministerio) return alert("Seleccioná un ministerio/agencia");
+    if (!categoria) return alert("Seleccioná una categoría");
+    if (!departamento) return alert("Seleccioná un departamento");
+    if (!localidad) return alert("Seleccioná una localidad");
+    if (!detalle || detalle.trim() === "") return alert("Detalle es obligatorio");
 
-    organismo_id,
-    subtipo_detalle,
-    costo_estimado,
-    costo_moneda,
-    nro_expediente,
-  };
+    await api(`/catalogos/geo?departamento=${encodeURIComponent(departamento)}&localidad=${encodeURIComponent(localidad)}`);
 
-  const resp = await api(`/gestiones`, { method: "POST", body: payload });
+    const payload = {
+      ministerio_agencia_id: ministerio,
+      categoria_general_id: categoria,
+      urgencia,
+      detalle,
+      observaciones,
+      departamento,
+      localidad,
+      direccion,
 
-  closeModal("modalNewGestion");
-  await loadGestiones(true);
+      organismo_id,
+      subtipo_detalle,
+      costo_estimado,
+      costo_moneda,
+      nro_expediente,
 
-  if (resp?.id_gestion) alert(`Gestión creada: ${resp.id_gestion}`);
+      // ✅ nuevos
+      tipo_gestion,
+      canal_origen,
+    };
+
+    const resp = await api(`/gestiones`, { method: "POST", body: payload });
+
+    closeModal("modalNewGestion");
+    await loadGestiones(true);
+
+    if (resp?.id_gestion) alert(`Gestión creada: ${resp.id_gestion}`);
+  } catch (e) {
+    console.error(e);
+    alert("No se pudo crear la gestión.\n\nDetalle: " + (e?.message || String(e)));
+  }
 }
 
 // ============================
 // USUARIOS (Admin)
 // ============================
-
-function normalizeEmail(s) {
-  return String(s || "").trim().toLowerCase();
-}
-
-function boolToYesNo(v) {
-  return (v === true || String(v).toLowerCase() === "true") ? "Sí" : "No";
-}
+function normalizeEmail(s) { return String(s || "").trim().toLowerCase(); }
+function boolToYesNo(v) { return (v === true || String(v).toLowerCase() === "true") ? "Sí" : "No"; }
 
 function clearUserForm() {
   setUsersError("");
@@ -969,7 +1055,6 @@ function clearUserForm() {
   if (rol) rol.value = "";
   if (activo) activo.checked = true;
 
-  // marca modo "create"
   if (email) email.dataset.mode = "create";
 }
 
@@ -1108,19 +1193,16 @@ async function upsertUser() {
   if (!email) return setUsersError("Email es obligatorio.");
   if (!rol) return setUsersError("Rol es obligatorio.");
 
-  // Si el email está readonly => estamos editando
   const isEditMode = !!emailEl?.readOnly || emailEl?.dataset.mode === "edit";
 
   try {
     if (isEditMode) {
-      // UPDATE
       await api(`/usuarios/${encodeURIComponent(email)}`, {
         method: "PUT",
         body: { nombre, rol, activo },
       });
       setUsersHint("Usuario actualizado.");
     } else {
-      // CREATE
       await api(`/usuarios/`, {
         method: "POST",
         body: { email, nombre, rol, activo },
@@ -1132,13 +1214,10 @@ async function upsertUser() {
     clearUserForm();
   } catch (e) {
     console.error(e);
-
-    // Caso común: 409 usuario ya existe
     if (e?.status === 409) {
       setUsersError("El usuario ya existe. Usá Editar desde la lista o cambiá el email.");
       return;
     }
-
     setUsersError("No se pudo guardar. " + (e?.message || String(e)));
   }
 }
@@ -1175,7 +1254,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireUI();
   initGoogleButton();
 
-  // Modo create por defecto en formulario
   const emailEl = document.getElementById("u_email");
   if (emailEl) emailEl.dataset.mode = "create";
 

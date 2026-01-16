@@ -1,25 +1,19 @@
-# app/routers/gestiones.py
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from uuid import uuid4
 from datetime import date, datetime
-import json
 from decimal import Decimal
-from typing import Any
+import json
 
 from google.cloud import bigquery
 
 from ..bq import bq_client, fqtn
 from ..deps import qparams, require_roles
 from ..models import GestionCreate, CambioEstado
-from .. import sql_gestiones as Q  # ✅ ahora importamos el nuevo archivo
+from .. import sql_gestiones as Q
 
 router = APIRouter(prefix="/gestiones", tags=["gestiones"])
 
 
-# -------------------------
-# Helpers
-# -------------------------
 def _run(query: str, cfg: bigquery.QueryJobConfig):
     return bq_client().query(query, job_config=cfg).result()
 
@@ -37,44 +31,18 @@ def _fmt_tables(sql_text: str) -> str:
     )
 
 
-def _jsonable(v: Any) -> Any:
-    """
-    Convierte tipos no serializables por json.dumps (Decimal/date/datetime/etc.)
-    a representaciones seguras.
-    """
-    if isinstance(v, Decimal):
-        # Preferimos string para preservar exactitud y evitar notación científica rara
-        return str(v)
-    if isinstance(v, (datetime, date)):
-        return v.isoformat()
-    return v
+def _json_safe(obj):
+    if isinstance(obj, Decimal):
+        return str(obj)
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return str(obj)
 
 
-def _dumps_safe(obj: Any) -> str:
-    """
-    JSON seguro (sin romper por Decimal).
-    """
-    return json.dumps(obj, ensure_ascii=False, default=_jsonable)
+def json_dumps_safe(d: dict) -> str:
+    return json.dumps(d, ensure_ascii=False, default=_json_safe)
 
 
-def _normalize_numeric_param(v: Any) -> Any:
-    """
-    Para parámetros BigQuery NUMERIC:
-    - None -> None
-    - Decimal -> str(Decimal)
-    - int/float/str -> str(...) para evitar conflictos de tipos
-    """
-    if v is None:
-        return None
-    if isinstance(v, Decimal):
-        return str(v)
-    # si viene float/int/str, lo pasamos a string igualmente (más estable con NUMERIC)
-    return str(v)
-
-
-# -------------------------
-# Endpoints
-# -------------------------
 @router.get("/")
 def list_gestiones(
     estado: str | None = None,
@@ -83,8 +51,12 @@ def list_gestiones(
     departamento: str | None = None,
     localidad: str | None = None,
 
-    # ✅ búsqueda server-side para que pagine “unificado”
+    # búsqueda server-side
     q: str | None = None,
+
+    # (opcionales por si después querés filtrar)
+    tipo_gestion: str | None = None,
+    canal_origen: str | None = None,
 
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -97,6 +69,9 @@ def list_gestiones(
         ("departamento", "STRING", departamento),
         ("localidad", "STRING", localidad),
         ("q", "STRING", q),
+
+        ("tipo_gestion", "STRING", tipo_gestion),
+        ("canal_origen", "STRING", canal_origen),
     ])
     total_row = _one(_fmt_tables(Q.COUNT_GESTIONES), cfg_count)
     total = int(total_row["total"]) if total_row and "total" in total_row else 0
@@ -108,6 +83,10 @@ def list_gestiones(
         ("departamento", "STRING", departamento),
         ("localidad", "STRING", localidad),
         ("q", "STRING", q),
+
+        ("tipo_gestion", "STRING", tipo_gestion),
+        ("canal_origen", "STRING", canal_origen),
+
         ("limit", "INT64", limit),
         ("offset", "INT64", offset),
     ])
@@ -142,6 +121,7 @@ def create_gestion(
     payload: GestionCreate,
     user=Depends(require_roles("Admin", "Supervisor", "Operador")),
 ):
+    # geo lookup
     cfg_geo = qparams([
         ("departamento", "STRING", payload.departamento),
         ("localidad", "STRING", payload.localidad),
@@ -157,15 +137,14 @@ def create_gestion(
     today = date.today()
 
     new_id = str(uuid4())
-    actor = (user.get("email") or user.get("usuario") or "").lower()
+    actor = user.get("email") or user.get("usuario") or ""
     rol = user.get("rol")
 
-    # lat/lon en tabla son NUMERIC -> pasamos NUMERIC como string (BigQuery NUMERIC param)
-    lat_num = _normalize_numeric_param(geo.get("lat"))
-    lon_num = _normalize_numeric_param(geo.get("lon"))
-
-    # costo_estimado puede venir como Decimal (Pydantic/BigQuery). Lo normalizamos para NUMERIC param.
-    costo_num = _normalize_numeric_param(getattr(payload, "costo_estimado", None))
+    # BigQuery NUMERIC: pasamos string
+    lat_val = geo.get("lat")
+    lon_val = geo.get("lon")
+    lat_num = None if lat_val is None else str(lat_val)
+    lon_num = None if lon_val is None else str(lon_val)
 
     cfg_ins = qparams([
         ("id_gestion", "STRING", new_id),
@@ -199,30 +178,35 @@ def create_gestion(
         ("lat", "NUMERIC", lat_num),
         ("lon", "NUMERIC", lon_num),
 
-        ("costo_estimado", "NUMERIC", costo_num),
+        ("costo_estimado", "NUMERIC", getattr(payload, "costo_estimado", None)),
         ("costo_moneda", "STRING", getattr(payload, "costo_moneda", None)),
 
         ("created_at", "TIMESTAMP", now_dt),
         ("created_by", "STRING", actor),
         ("updated_at", "TIMESTAMP", now_dt),
         ("updated_by", "STRING", actor),
+
+        # ✅ NUEVOS
+        ("tipo_gestion", "STRING", getattr(payload, "tipo_gestion", None)),
+        ("canal_origen", "STRING", getattr(payload, "canal_origen", None)),
     ])
     _run(_fmt_tables(Q.INSERT_GESTION), cfg_ins)
 
-    # Metadata para auditoría: lo hacemos 100% serializable (Decimal/date/etc.)
     meta = {
         "ministerio_agencia_id": payload.ministerio_agencia_id,
         "categoria_general_id": payload.categoria_general_id,
         "organismo_id": getattr(payload, "organismo_id", None),
         "subtipo_detalle": getattr(payload, "subtipo_detalle", None),
-        "costo_estimado": getattr(payload, "costo_estimado", None),  # puede ser Decimal -> _dumps_safe lo maneja
+        "costo_estimado": getattr(payload, "costo_estimado", None),
         "costo_moneda": getattr(payload, "costo_moneda", None),
         "nro_expediente": getattr(payload, "nro_expediente", None),
         "departamento": payload.departamento,
         "localidad": payload.localidad,
         "geo_id": geo.get("id_geo"),
-        "lat": geo.get("lat"),
-        "lon": geo.get("lon"),
+
+        # ✅ NUEVOS
+        "tipo_gestion": getattr(payload, "tipo_gestion", None),
+        "canal_origen": getattr(payload, "canal_origen", None),
     }
 
     cfg_ev = qparams([
@@ -238,7 +222,7 @@ def create_gestion(
         ("valor_anterior", "STRING", None),
         ("valor_nuevo", "STRING", None),
         ("comentario", "STRING", None),
-        ("metadata_json", "STRING", _dumps_safe(meta)),
+        ("metadata_json", "STRING", json_dumps_safe(meta)),
     ])
     _run(_fmt_tables(Q.INSERT_EVENTO), cfg_ev)
 
@@ -258,18 +242,8 @@ def cambiar_estado(
 
     estado_anterior = g.get("estado")
     now_dt = datetime.utcnow()
-    actor = (user.get("email") or user.get("usuario") or "").lower()
+    actor = user.get("email") or user.get("usuario") or ""
     rol = user.get("rol")
-
-    # ✅ regla: ARCHIVADO / NO REMITE SUAC requieren comentario
-    nuevo_estado = getattr(payload, "nuevo_estado", None)
-    comentario = getattr(payload, "comentario", None)
-    if (nuevo_estado or "").upper() in {"ARCHIVADO", "NO REMITE SUAC"}:
-        if comentario is None or str(comentario).strip() == "":
-            raise HTTPException(
-                status_code=400,
-                detail="Comentario obligatorio para estado ARCHIVADO / NO REMITE SUAC"
-            )
 
     cfg_upd = qparams([
         ("id_gestion", "STRING", id_gestion),
@@ -299,7 +273,7 @@ def cambiar_estado(
         ("valor_anterior", "STRING", None),
         ("valor_nuevo", "STRING", None),
         ("comentario", "STRING", payload.comentario),
-        ("metadata_json", "STRING", _dumps_safe(meta)),
+        ("metadata_json", "STRING", json_dumps_safe(meta)),
     ])
     _run(_fmt_tables(Q.INSERT_EVENTO), cfg_ev)
 
@@ -312,7 +286,7 @@ def delete_gestion(
     user=Depends(require_roles("Admin", "Supervisor")),
 ):
     now_dt = datetime.utcnow()
-    actor = (user.get("email") or user.get("usuario") or "").lower()
+    actor = user.get("email") or user.get("usuario") or ""
     rol = user.get("rol")
 
     cfg_del = qparams([
@@ -335,7 +309,7 @@ def delete_gestion(
         ("valor_anterior", "STRING", "FALSE"),
         ("valor_nuevo", "STRING", "TRUE"),
         ("comentario", "STRING", "Borrado lógico desde UI"),
-        ("metadata_json", "STRING", _dumps_safe({})),
+        ("metadata_json", "STRING", json_dumps_safe({})),
     ])
     _run(_fmt_tables(Q.INSERT_EVENTO), cfg_ev)
 

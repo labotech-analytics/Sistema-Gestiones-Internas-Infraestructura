@@ -1,5 +1,6 @@
 # app/sql_gestiones.py
 # Queries BigQuery (parameterized)
+
 # -------------------------
 # GESTIONES
 # -------------------------
@@ -13,6 +14,11 @@ WHERE is_deleted = FALSE
   AND (@categoria IS NULL OR @categoria = '' OR categoria_general_id = @categoria)
   AND (@departamento IS NULL OR @departamento = '' OR UPPER(TRIM(departamento)) = UPPER(TRIM(@departamento)))
   AND (@localidad IS NULL OR @localidad = '' OR UPPER(TRIM(localidad)) = UPPER(TRIM(@localidad)))
+
+  -- ✅ NUEVOS (filtros opcionales)
+  AND (@tipo_gestion IS NULL OR @tipo_gestion = '' OR tipo_gestion = @tipo_gestion)
+  AND (@canal_origen IS NULL OR @canal_origen = '' OR canal_origen = @canal_origen)
+
   AND (
     @q IS NULL OR @q = '' OR (
       CONTAINS_SUBSTR(LOWER(CAST(id_gestion AS STRING)), LOWER(@q)) OR
@@ -24,7 +30,11 @@ WHERE is_deleted = FALSE
       CONTAINS_SUBSTR(LOWER(COALESCE(subtipo_detalle, '')), LOWER(@q)) OR
       CONTAINS_SUBSTR(LOWER(COALESCE(nro_expediente, '')), LOWER(@q)) OR
       CONTAINS_SUBSTR(LOWER(CAST(COALESCE(costo_estimado, 0) AS STRING)), LOWER(@q)) OR
-      CONTAINS_SUBSTR(LOWER(COALESCE(costo_moneda, '')), LOWER(@q))
+      CONTAINS_SUBSTR(LOWER(COALESCE(costo_moneda, '')), LOWER(@q)) OR
+
+      -- ✅ NUEVOS CAMPOS incluidos en búsqueda
+      CONTAINS_SUBSTR(LOWER(COALESCE(tipo_gestion, '')), LOWER(@q)) OR
+      CONTAINS_SUBSTR(LOWER(COALESCE(canal_origen, '')), LOWER(@q))
     )
   )
 """
@@ -38,6 +48,11 @@ SELECT
   urgencia,
   ministerio_agencia_id,
   categoria_general_id,
+
+  -- ✅ NUEVOS
+  tipo_gestion,
+  canal_origen,
+
   detalle,
   costo_estimado,
   costo_moneda,
@@ -51,6 +66,11 @@ WHERE is_deleted = FALSE
   AND (@categoria IS NULL OR @categoria = '' OR categoria_general_id = @categoria)
   AND (@departamento IS NULL OR @departamento = '' OR UPPER(TRIM(departamento)) = UPPER(TRIM(@departamento)))
   AND (@localidad IS NULL OR @localidad = '' OR UPPER(TRIM(localidad)) = UPPER(TRIM(@localidad)))
+
+  -- ✅ NUEVOS (filtros opcionales)
+  AND (@tipo_gestion IS NULL OR @tipo_gestion = '' OR tipo_gestion = @tipo_gestion)
+  AND (@canal_origen IS NULL OR @canal_origen = '' OR canal_origen = @canal_origen)
+
   AND (
     @q IS NULL OR @q = '' OR (
       CONTAINS_SUBSTR(LOWER(CAST(id_gestion AS STRING)), LOWER(@q)) OR
@@ -62,7 +82,9 @@ WHERE is_deleted = FALSE
       CONTAINS_SUBSTR(LOWER(COALESCE(subtipo_detalle, '')), LOWER(@q)) OR
       CONTAINS_SUBSTR(LOWER(COALESCE(nro_expediente, '')), LOWER(@q)) OR
       CONTAINS_SUBSTR(LOWER(CAST(COALESCE(costo_estimado, 0) AS STRING)), LOWER(@q)) OR
-      CONTAINS_SUBSTR(LOWER(COALESCE(costo_moneda, '')), LOWER(@q))
+      CONTAINS_SUBSTR(LOWER(COALESCE(costo_moneda, '')), LOWER(@q)) OR
+      CONTAINS_SUBSTR(LOWER(COALESCE(tipo_gestion, '')), LOWER(@q)) OR
+      CONTAINS_SUBSTR(LOWER(COALESCE(canal_origen, '')), LOWER(@q))
     )
   )
 ORDER BY fecha_ingreso DESC, fecha_estado DESC
@@ -109,7 +131,11 @@ SELECT
   updated_at,
   updated_by,
 
-  is_deleted
+  is_deleted,
+
+  -- ✅ NUEVOS
+  tipo_gestion,
+  canal_origen
 FROM `{gestiones}`
 WHERE id_gestion = @id_gestion
   AND is_deleted = FALSE
@@ -190,7 +216,11 @@ INSERT INTO `{gestiones}` (
   updated_at,
   updated_by,
 
-  is_deleted
+  is_deleted,
+
+  -- ✅ NUEVOS
+  tipo_gestion,
+  canal_origen
 )
 VALUES (
   @id_gestion,
@@ -231,7 +261,11 @@ VALUES (
   @updated_at,
   @updated_by,
 
-  FALSE
+  FALSE,
+
+  -- ✅ NUEVOS
+  @tipo_gestion,
+  @canal_origen
 )
 """
 

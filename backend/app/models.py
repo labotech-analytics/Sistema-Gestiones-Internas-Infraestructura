@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
-from decimal import Decimal
+from datetime import date
 
 Rol = Literal["Admin", "Operador", "Supervisor", "Consulta"]
 Estado = Literal[
@@ -12,7 +12,6 @@ Estado = Literal[
     "ARCHIVADO",
 ]
 Urgencia = Literal["Alta", "Media", "Baja"]
-
 
 class GestionCreate(BaseModel):
     ministerio_agencia_id: str
@@ -26,10 +25,14 @@ class GestionCreate(BaseModel):
     observaciones: Optional[str] = None
     urgencia: Optional[Urgencia] = "Media"
 
-    # nuevos campos (opcionales)
+    # ✅ NUEVOS CAMPOS
+    tipo_gestion: Optional[str] = None        # ej: TG_CONSULTA, TG_DEMANDA...
+    canal_origen: Optional[str] = None        # ej: CO_AGENDA, CO_TELEFONO...
+
+    # Campos extendidos que ya venías usando en UI (si existen en tu payload)
     organismo_id: Optional[str] = None
     subtipo_detalle: Optional[str] = None
-    costo_estimado: Optional[Decimal] = None
+    costo_estimado: Optional[float] = None
     costo_moneda: Optional[str] = None
     nro_expediente: Optional[str] = None
 
@@ -42,19 +45,19 @@ class GestionUpdate(BaseModel):
     urgencia: Optional[Urgencia] = None
     direccion: Optional[str] = None
 
-    organismo_id: Optional[str] = None
-    subtipo_detalle: Optional[str] = None
-    costo_estimado: Optional[Decimal] = None
-    costo_moneda: Optional[str] = None
-    nro_expediente: Optional[str] = None
-
     # obligatorios en edición también (si vienen, no pueden ser vacíos)
     departamento: Optional[str] = None
     localidad: Optional[str] = None
+
+    # ✅ NUEVOS CAMPOS
+    tipo_gestion: Optional[str] = None
+    canal_origen: Optional[str] = None
 
 
 class CambioEstado(BaseModel):
     nuevo_estado: Estado
     comentario: Optional[str] = None
+
+    # Campos extra que tu UI venía mandando
     derivado_a: Optional[str] = None
     acciones_implementadas: Optional[str] = None

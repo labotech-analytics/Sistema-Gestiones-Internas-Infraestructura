@@ -88,6 +88,17 @@
               <select id="categoriaFilter"><option value="">(Todos)</option></select>
             </div>
 
+            <!-- ✅ NUEVOS FILTROS -->
+            <div class="field">
+              <label for="tipoGestionFilter">Tipo</label>
+              <select id="tipoGestionFilter"><option value="">(Todos)</option></select>
+            </div>
+
+            <div class="field">
+              <label for="canalOrigenFilter">Canal origen</label>
+              <select id="canalOrigenFilter"><option value="">(Todos)</option></select>
+            </div>
+
             <div class="field">
               <label for="departamentoFilter">Departamento</label>
               <select id="departamentoFilter"><option value="">(Todos)</option></select>
@@ -164,7 +175,7 @@
                 </label>
 
                 <label>Rol *
-                  <select id="u_rol" autocomplete="off">
+                  <select id="u_rol">
                     <option value="">(Seleccionar)</option>
                     <option value="Admin">Admin</option>
                     <option value="Supervisor">Supervisor</option>
@@ -195,7 +206,6 @@
               </div>
 
               <div class="table-wrap">
-                <!-- Se llena desde app.js -->
                 <table class="grid" id="usersGrid"></table>
               </div>
             </div>
@@ -235,7 +245,9 @@
         <div class="modal-card" role="document">
           <div class="modal-head">
             <h3 class="h3">Nueva gestión</h3>
-            <button class="btn ghost" type="button" onclick="closeModal('modalNewGestion')">Cerrar</button>
+
+            <!-- ✅ Botón X arriba derecha -->
+            <button class="btn ghost modal-x" type="button" onclick="closeModal('modalNewGestion')" aria-label="Cerrar">✕</button>
           </div>
 
           <div class="form-grid">
@@ -249,6 +261,19 @@
 
             <label>Urgencia
               <select id="ng_urgencia"></select>
+            </label>
+
+            <!-- ✅ NUEVOS CAMPOS -->
+            <label>Tipo de gestión
+              <select id="ng_tipo_gestion">
+                <option value="">(Seleccionar)</option>
+              </select>
+            </label>
+
+            <label>Canal origen
+              <select id="ng_canal_origen">
+                <option value="">(Seleccionar)</option>
+              </select>
             </label>
 
             <label>Departamento
@@ -265,7 +290,6 @@
               <input id="ng_direccion" type="text" placeholder="Calle y número (opcional)" />
             </label>
 
-            <!-- NUEVOS CAMPOS -->
             <label>Organismo
               <input id="ng_organismo_id" type="text" placeholder="organismo_id" />
             </label>
@@ -285,7 +309,8 @@
             <label class="span-2">Sticker nro de expediente
               <input id="ng_nro_expediente" type="text" placeholder="Ej: EXP-2026-..." />
             </label>
-            
+
+            <!-- ✅ ORDEN CORREGIDO: Detalle arriba -->
             <label class="span-2">Detalle *
               <textarea id="ng_detalle" rows="4" placeholder="Describí la demanda"></textarea>
             </label>
@@ -311,7 +336,7 @@
         <div class="modal-card" role="document">
           <div class="modal-head">
             <h3 class="h3">Modificar estado</h3>
-            <button class="btn ghost" type="button" onclick="closeModal('modalChangeState')">Cerrar</button>
+            <button class="btn ghost modal-x" type="button" onclick="closeModal('modalChangeState')" aria-label="Cerrar">✕</button>
           </div>
 
           <input id="cs_id_gestion" type="hidden" />
@@ -346,7 +371,7 @@
         <div class="modal-card" role="document">
           <div class="modal-head">
             <h3 class="h3" id="ev_title">Eventos</h3>
-            <button class="btn ghost" type="button" onclick="closeModal('modalEventos')">Cerrar</button>
+            <button class="btn ghost modal-x" type="button" onclick="closeModal('modalEventos')" aria-label="Cerrar">✕</button>
           </div>
           <pre id="ev_body" class="pre"></pre>
         </div>

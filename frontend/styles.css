@@ -165,6 +165,20 @@ select, input, textarea {
 }
 textarea { resize: vertical; }
 
+/* checkbox label */
+label.check {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+label.check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
 /* ===== Toolbar ===== */
 .toolbar {
   display: flex;
@@ -246,6 +260,14 @@ textarea { resize: vertical; }
 
 .cell-main { font-weight: 650; }
 .cell-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+/* used in app.js for long text cells */
+.cell-wrap {
+  max-width: 520px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .badge {
   display: inline-flex;
@@ -375,31 +397,35 @@ body.modal-open { overflow: hidden; }
 .drawer-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
 .drawer-body { padding: 14px; overflow: auto; }
-.dr-cards { display: grid; gap: 12px; }
-.dr-card {
-  border: 1px solid rgba(229,231,235,.9);
-  border-radius: var(--radius);
-  padding: 12px;
-  background: linear-gradient(180deg, var(--surface), rgba(243,244,246,.35));
-}
-.dr-card-title { font-weight: 800; font-size: 12px; margin-bottom: 8px; color: #0b1220; }
 
-.dr-kv {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
+/* compat: sections used en drawer */
+.drawer-section { margin-bottom: 14px; }
+.drawer-section .h4 { margin-bottom: 8px; }
+
+/* Key/Value layouts (compat) */
 .kv {
   display: grid;
   grid-template-columns: 140px 1fr;
   gap: 8px;
   align-items: baseline;
 }
+
+/* KV rows used by app.js (kv-row/kv-k/kv-v) */
+.kv-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(229,231,235,.9);
+}
+.kv-row:last-child { border-bottom: 0; }
+.kv-k { color: var(--muted); font-size: 11px; }
+.kv-v { font-size: 12px; font-weight: 650; color: #0b1220; }
+
 .k { color: var(--muted); font-size: 11px; }
 .v { font-size: 12px; font-weight: 650; color: #0b1220; }
 
-.dr-text { font-size: 12px; color: #0b1220; white-space: pre-wrap; line-height: 1.35; }
-
+/* Timeline (compat: tl-head/tl-type/tl-date + tl-body) */
 .timeline { display: grid; gap: 10px; }
 .tl-item {
   border: 1px solid rgba(229,231,235,.9);
@@ -407,9 +433,15 @@ body.modal-open { overflow: hidden; }
   padding: 10px;
   background: var(--surface);
 }
-.tl-top { display:flex; justify-content: space-between; gap:10px; flex-wrap:wrap; }
-.tl-title { font-weight: 800; font-size: 12px; }
-.tl-meta { color: var(--muted); font-size: 11px; }
+.tl-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.tl-type { font-weight: 800; font-size: 12px; }
+.tl-date { color: var(--muted); font-size: 11px; }
 .tl-body { margin-top: 6px; color: #0b1220; font-size: 12px; white-space: pre-wrap; line-height: 1.35; }
 
 /* ===== Responsive ===== */
@@ -441,4 +473,5 @@ body.modal-open { overflow: hidden; }
   /* Drawer full width */
   .drawer-panel { width: 100%; }
   .kv { grid-template-columns: 120px 1fr; }
+  .kv-row { grid-template-columns: 120px 1fr; }
 }

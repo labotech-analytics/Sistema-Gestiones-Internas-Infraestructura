@@ -1,6 +1,4 @@
-# app/routers/catalogos.py
 from fastapi import APIRouter, Depends, HTTPException, Query
-
 from ..bq import bq_client, fqtn
 from ..deps import qparams, current_user
 
@@ -51,6 +49,30 @@ def categorias(user=Depends(current_user)):
     return [dict(r) for r in bq_client().query(q).result()]
 
 
+# ✅ NUEVO: Tipos de gestión
+@router.get("/tipos-gestion")
+def tipos_gestion(user=Depends(current_user)):
+    q = f"""
+    SELECT id, nombre, activo, orden, descripcion
+    FROM `{fqtn("cat_tipo_gestion")}`
+    WHERE activo = TRUE
+    ORDER BY orden, nombre
+    """
+    return [dict(r) for r in bq_client().query(q).result()]
+
+
+# ✅ NUEVO: Canales de origen
+@router.get("/canales-origen")
+def canales_origen(user=Depends(current_user)):
+    q = f"""
+    SELECT id, nombre, activo, orden, descripcion
+    FROM `{fqtn("cat_canal_origen")}`
+    WHERE activo = TRUE
+    ORDER BY orden, nombre
+    """
+    return [dict(r) for r in bq_client().query(q).result()]
+
+
 @router.get("/departamentos")
 def departamentos(user=Depends(current_user)):
     q = f"""
@@ -77,16 +99,13 @@ def localidades(
     job = bq_client().query(q, job_config=qparams([("depto", "STRING", departamento)]))
     return [r["localidad"] for r in job.result()]
 
+
 @router.get("/geo")
 def geo_lookup(
     departamento: str = Query(..., min_length=1),
     localidad: str = Query(..., min_length=1),
     user=Depends(current_user),
 ):
-    """
-    Valida que (departamento, localidad) exista en geo_localidades
-    y devuelve lat/lon/id_geo si existen.
-    """
     q = f"""
     SELECT
       id_geo,
@@ -117,8 +136,6 @@ def geo_lookup(
         )
 
     r = rows[0]
-
-    # BigQuery Row -> dict (más estable que dict(rows[0]) en algunos casos)
     out = {
         "id_geo": r.get("id_geo"),
         "departamento": r.get("departamento"),
